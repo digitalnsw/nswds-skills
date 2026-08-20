@@ -1,6 +1,6 @@
 ---
 name: handover-docs
-description: Write or rewrite project documentation as a technical knowledgebase / handover reference for an incoming developer or client — never as a project journal or personal working log. Use this skill whenever the user asks to write, update, clean up, tidy, restructure, or "professionalise" documentation, README content, handover notes, project notes, or a knowledgebase — and whenever converting working notes, session logs, or issue-tracking notes into docs. Trigger even if the user just says "update the docs" or "document this" after a piece of work: the output must follow this style.
+description: 'Write or rewrite project documentation as a technical knowledgebase / handover reference for an incoming developer or client — never as a project journal or personal working log. Use this skill whenever the user asks to write, update, clean up, tidy, restructure, or "professionalise" documentation, README content, handover notes, project notes, or a knowledgebase — and whenever converting working notes, session logs, or issue-tracking notes into docs. Trigger even if the user just says "update the docs" or "document this" after a piece of work: the output must follow this style.'
 ---
 
 # Handover-style documentation

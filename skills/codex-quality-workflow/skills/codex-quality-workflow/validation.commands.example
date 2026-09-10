@@ -1,0 +1,10 @@
+# Copy this file to validation.commands and replace these examples with your
+# repository's authoritative, non-mutating gates. One shell command per line.
+# Blank lines and lines beginning with # are ignored. Commands stop on failure.
+
+# npm run format:check
+# npm run lint
+# npm run typecheck
+# npm test
+# npm run build
+

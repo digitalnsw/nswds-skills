@@ -1,0 +1,44 @@
+{
+  "review": {
+    "base_sha": "1111111111111111111111111111111111111111",
+    "head_sha": "2222222222222222222222222222222222222222",
+    "reviewer": "senior-code-reviewer",
+    "target": "frozen-implementation"
+  },
+  "completion": {
+    "status": "COMPLETE",
+    "remaining_scope": [],
+    "continuation_notes": ""
+  },
+  "findings": [
+    {
+      "id": "R-001",
+      "severity": "BLOCKING",
+      "confidence": "HIGH",
+      "title": "Expired refresh tokens are accepted",
+      "locations": [{ "path": "src/auth/token.ts", "line": 88 }],
+      "contract": "Expired refresh tokens must be rejected.",
+      "trigger": "Call validateRefreshToken with exp equal to now minus one second.",
+      "observed_behavior": "The function returns success because it verifies only the signature.",
+      "expected_behavior": "The function rejects the token with TOKEN_EXPIRED.",
+      "evidence": [
+        "The changed function has no expiration comparison.",
+        "The existing test covers invalid signatures but not expired valid signatures."
+      ],
+      "evidence_sources": [
+        { "kind": "code", "reference": "src/auth/token.ts:88", "detail": "Changed validation path checks signature but not exp." },
+        { "kind": "test", "reference": "src/auth/token.test.ts:120", "detail": "No expired, validly signed token case." }
+      ],
+      "consequence": "A revoked-by-expiry session can be renewed.",
+      "required_outcome": "Validly signed refresh tokens whose expiration is in the past are rejected and regression tested.",
+      "status": "CONFIRMED",
+      "triage_reason": "The documented token contract and a direct code path establish the violation."
+    }
+  ],
+  "coverage": {
+    "passes_completed": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+    "commands_run": ["git diff BASE...HEAD", "repository test command"],
+    "not_run": [],
+    "clean_areas": ["public consumers", "release configuration"]
+  }
+}

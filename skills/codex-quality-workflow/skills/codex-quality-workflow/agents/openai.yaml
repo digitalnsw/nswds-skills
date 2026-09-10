@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex quality workflow"
+  short_description: "Independent review, triage and controlled repair"
+  default_prompt: "Use $codex-quality-workflow to review and repair this branch."

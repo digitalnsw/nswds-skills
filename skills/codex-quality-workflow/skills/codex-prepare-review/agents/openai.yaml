@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prepare review evidence"
+  short_description: "Gather repository context and deterministic evidence"
+  default_prompt: "Use $codex-prepare-review to prepare this branch for review."

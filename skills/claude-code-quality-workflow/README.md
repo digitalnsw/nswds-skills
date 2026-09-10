@@ -14,7 +14,7 @@ automatic handoff between independent agents.
 
 ## Install globally
 
-Extract the ZIP, enter the folder, and run:
+Clone the repository, change into this package's directory, and run:
 
 ```sh
 ./install.sh --dry-run
@@ -46,7 +46,7 @@ Requirements:
 Restart Claude Code if this is the first time the global `agents` directory has
 been created. Then run `/doctor`.
 
-You can validate the extracted package before installation with:
+You can validate the package before installation with:
 
 ```sh
 ./scripts/self-test.sh

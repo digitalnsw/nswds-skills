@@ -48,11 +48,19 @@ ESLint and Ruff are detected automatically. No analyzer is downloaded implicitly
 
 ## Repository gates and state
 
-Configuration lookup: repo `.codex/quality-workflow/validation.commands`, then
-existing repo `.claude/quality-workflow/validation.commands`, then
-`validation.commands` inside the installed main skill. Same precedence for
-analysis.commands. The repo's configured commands define the authoritative gate;
-generic auto-detection is labeled baseline and cannot satisfy full mode.
+Initialization is automatic before validation. `$codex-quality-workflow init`
+performs setup only; `init refresh` reinspects gate definitions. Codex reads CI,
+workspace manifests and called helpers, then saves a plan in Git-local
+`quality-workflow-init` metadata. Setup does not dirty source or run reviews.
+Changes to CI/manifests or recorded helpers invalidate the generated plan.
+
+Validation lookup: repo `.codex/quality-workflow/validation.commands`, then
+existing repo `.claude/quality-workflow/validation.commands`, then the generated
+local plan (shared with Claude). Explicit files are preserved. A global default
+inside the skill is a baseline fallback only, not repository onboarding. Analysis
+configuration still uses repo .codex, repo .claude, then skill-directory precedence.
+CI-only checks are recorded as gaps, not passed gates. Missing tools or failing
+checks still block; missing configuration alone no longer needs manual setup.
 
 Evidence, reports, retry counters and hidden snapshots live under the Git path
 `codex-quality-workflow`. Use `git rev-parse --git-path codex-quality-workflow` in

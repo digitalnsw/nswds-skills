@@ -14,11 +14,10 @@ repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$repo_root"
 script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
-workflow_dir="$(cd -- "$script_dir/.." && pwd)"
 project_commands="$repo_root/.codex/quality-workflow/validation.commands"
 if [[ ! -f "$project_commands" ]]; then project_commands="$repo_root/.claude/quality-workflow/validation.commands"; fi
-global_commands="$workflow_dir/validation.commands"
-if [[ -f "$project_commands" ]]; then commands_file="$project_commands"; else commands_file="$global_commands"; fi
+commands_file=""
+if [[ "$mode" == "full" ]]; then commands_file="$(node "$script_dir/quality-init.mjs" codex resolve)"; fi
 ran=0
 
 workspace_fingerprint() {
@@ -43,7 +42,7 @@ gate_fingerprint() {
 run_gate() {
   local command_text="$1"
   echo "+ $command_text"
-  bash -o pipefail -c "$command_text"
+  bash -o pipefail -c "$command_text" < /dev/null
   ran=$((ran + 1))
 }
 
@@ -172,7 +171,7 @@ if [[ -f "$commands_file" ]] && grep -Eq '^[[:space:]]*[^#[:space:]]' "$commands
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
     run_gate "$line"
   done < "$commands_file"
-  echo "full validation passed ($ran gates, configured by $commands_file)"
+  echo "full local validation passed ($ran gates, configured by $commands_file); CI-only checks are not certified"
   exit 0
 fi
 

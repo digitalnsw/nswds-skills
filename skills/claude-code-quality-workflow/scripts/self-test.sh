@@ -2,6 +2,7 @@
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "$0")/.." && pwd)"
+node "$root/scripts/init-test.mjs"
 
 for script in "$root"/.claude/quality-workflow/scripts/*.sh "$root/install.sh"; do
   bash -n "$script"

@@ -14,12 +14,16 @@ runs explicitly inside this workflow. It does not enforce a global Codex Stop ho
 1. Resolve the repo root and this skill directory. Read applicable AGENTS.md and
    repository rules. Check `codex exec --help` is available. Do not launch a worker
    recursively from within a worker job.
-2. Run `bash <skill>/scripts/freeze.sh [branch]`, then
+2. Follow `references/init-protocol.md` with ENGINE=codex to initialize or refresh
+   repository validation automatically. Then run `bash <skill>/scripts/freeze.sh [branch]`, then
    `bash <skill>/scripts/prepare-review.sh initial`. Read the printed manifest.
    Require ready=true. Full mode also requires validation.configured=true.
    Config priority is repo `.codex/quality-workflow`, then repo
-   `.claude/quality-workflow` (reuse the user's existing gate list), then the files
-   beside this skill's scripts. Never claim baseline auto-detection is full coverage.
+   `.claude/quality-workflow` (reuse the user's existing gate list), then the generated
+   Git-local init plan. Global defaults alone do not count as repository setup.
+   Never claim baseline auto-detection is full coverage. Carry the manifest's
+   validation.configuration.exclusions through to the final report as unverified
+   CI-only/inapplicable checks. Configured local gates do not prove CI passed.
 3. State is under `git rev-parse --git-path codex-quality-workflow`; resolve this
    path against the repo root (worktrees may use a path outside `.git`). Create job
    JSON files under that state directory, not tracked source. Pass absolute paths.
@@ -86,7 +90,8 @@ Review-only mode stops with consolidated findings and coverage. Full mode contin
    report. It must not touch unrelated findings, weaken gates, commit, or push.
 4. Repairs get one attempt only. An error or partial repair stops the workflow;
    leave its diff available for inspection. Do not automatically retry writes.
-5. Run full verify in the parent. On success create candidate R-xxx using
+5. If gate definitions changed, refresh init using the protocol without weakening
+   checks. Run full verify in the parent. On success create candidate R-xxx using
    repair-state.mjs. Run `repair-review` with target=repair-diff and the candidate's
    base/head pair; inspect TWO-endpoint diff, never triple-dot. Pass the original
    finding as input. Only COMPLETE and zero findings authorizes snapshot accept.

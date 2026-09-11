@@ -27,7 +27,9 @@ the full deterministic gate, `analyzers/` contains static-analysis output, and
 failed required analyzer, or command that mutated the reviewed state blocks review.
 
 A warning that validation is `generic-auto-detected` means the repository has not
-declared its real merge gate. Add `.claude/quality-workflow/validation.commands`.
+been initialized. `/quality-init` inspects and saves the gate plan; normal workflow,
+prepare and full-validation commands do this automatically. Do not ask the user to
+author validation.commands. Existing explicit configuration is preserved.
 Do not treat a hand-run suite from an earlier state as equivalent evidence.
 
 ## A reviewer cannot run a useful command

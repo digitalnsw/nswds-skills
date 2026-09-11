@@ -152,7 +152,7 @@ if (claudeMd !== originalClaudeMd) {
 
 const manifestPath = join(target, "quality-workflow", "install-manifest.json");
 const manifest = {
-  version: "2.1.0",
+  version: "2.2.0",
   installedAt: new Date().toISOString(),
   packageRoot,
   target,

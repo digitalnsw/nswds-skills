@@ -26,5 +26,5 @@ coverage and orchestration; validation cannot prove that a reported code review 
 correct. Retry limits, report checks, saved results and state comparisons are
 implemented in the runner.
 
-Repeat the fixture suite with `node scripts/self-test.mjs` from this package's
-directory. It retains its isolated fixtures in a temporary directory for inspection.
+Repeat the fixture suite with `node scripts/self-test.mjs` from the extracted
+package. It retains its isolated fixtures in a temporary directory for inspection.

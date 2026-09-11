@@ -17,13 +17,17 @@ The user's optional argument is a destination base branch. When it is absent,
 let `freeze.sh` detect the remote default, `main`, or `master`. Never ask for a
 commit SHA and never silently choose a tag. Run this state machine exactly:
 
+0. Read `quality-workflow/init-protocol.md` beside the active scripts and perform
+   automatic repository setup with ENGINE=claude. You may use the init helper to
+   save Git-local validation metadata; this is not a source edit. Do not ask the
+   user to supply validation.commands. Continue once the local plan is ready.
 1. Run `freeze.sh [base-branch]`. If the implementation is uncommitted or the
    tree is dirty, stop with a plain-language instruction to commit the intended
    implementation. Never commit, stash, reset, discard, or clean for the user.
 2. Run `prepare-review.sh initial`. Require `READY=1` and
    `VALIDATION_SCOPE=repository-configured` for the complete workflow. If only
-   generic auto-detection is available, stop and ask for the repository's real
-   `.claude/quality-workflow/validation.commands`; never label partial coverage as
+   generic auto-detection is available, complete setup using the init protocol;
+   never label partial coverage as
    the merge gate. Its evidence manifest is the canonical
    base/head/context/validation/static-analysis input.
 3. Invoke `senior-code-reviewer` once. Give it the evidence directory and any
@@ -100,6 +104,10 @@ commit SHA and never silently choose a tag. Run this state machine exactly:
    analyzer outcomes, confirmed/rejected/decision findings, accepted repairs,
    final findings, per-lane continuation counts, and explicit residual gaps. State that repairs remain
    uncommitted for user inspection. Never commit, push, create a PR, or deploy.
+
+If gate definitions change during repairs, refresh the local plan using the init
+protocol before validation, preserving the gate set. Include the manifest's
+validation.configuration.exclusions in the final report; CI-only is not passed.
 
 Pass outputs directly between agents through your context. Never ask the user to
 copy findings from one command into another or to approve a routine continuation.

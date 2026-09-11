@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { selectValidation } from "./quality-init.mjs";
 
 const target = process.argv[2] ?? "initial";
 if (!new Set(["initial", "final"]).has(target)) {
@@ -131,9 +132,8 @@ try {
 
   const verify = run(join(workflowDir, "scripts", "verify.sh"), ["full", "--reuse"], { cwd: repo });
   writeFileSync(join(evidenceDir, "validation.log"), `${verify.stdout}${verify.stderr}`);
-  const validationPaths = [join(repo, ".codex", "quality-workflow", "validation.commands"), join(repo, ".claude", "quality-workflow", "validation.commands"), join(workflowDir, "validation.commands")];
-  const selectedValidation = validationPaths.find(existsSync);
-  const validationConfigured = Boolean(selectedValidation && readFileSync(selectedValidation, "utf8").split(/\r?\n/).some(line => line.trim() && !/^\s*#/.test(line)));
+  const validationSelection = selectValidation(repo, workflowDir, 'codex');
+  const validationConfigured = validationSelection.status === 'READY';
 
   const analyzerResults = [];
   const changedPathOutput = gitRaw(["diff", "--name-only", "-z", "--diff-filter=ACMR", `${base}...${head}`]);
@@ -188,6 +188,7 @@ try {
   }
   const requiredAnalyzerFailure = analyzerResults.some((item) => item.policy === "required" && item.status !== 0);
   const warnings = [];
+  for (const gap of validationSelection.exclusions) warnings.push(`Not verified locally: ${gap.name} — ${gap.reason} (${gap.source})`);
   if (!validationConfigured) warnings.push("Validation used generic auto-detection, not a repository-defined merge-gate command list.");
   if (analyzerResults.length === 0) warnings.push("No ESLint, Ruff, or configured static analyzer produced structured evidence.");
   if (!repositoryStateSafe) warnings.push("A deterministic command changed the reviewed repository state; evidence is not safe to review.");
@@ -216,6 +217,7 @@ try {
     validation: {
       status: verify.status,
       configured: validationConfigured,
+      configuration: validationSelection,
       output: "validation.log"
     },
     analyzers: analyzerResults,

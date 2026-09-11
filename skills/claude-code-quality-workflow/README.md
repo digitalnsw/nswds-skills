@@ -14,7 +14,7 @@ automatic handoff between independent agents.
 
 ## Install globally
 
-Clone the repository, change into this package's directory, and run:
+Extract the ZIP, enter the folder, and run:
 
 ```sh
 ./install.sh --dry-run
@@ -46,7 +46,7 @@ Requirements:
 Restart Claude Code if this is the first time the global `agents` directory has
 been created. Then run `/doctor`.
 
-You can validate the package before installation with:
+You can validate the extracted package before installation with:
 
 ```sh
 ./scripts/self-test.sh
@@ -69,21 +69,26 @@ manifest, skills, and agent definitions.
 
 ## Configure deterministic validation
 
-No per-repository setup is required: the verifier safely auto-detects common
-JavaScript, Python, Go, and Rust checks.
+Just run `/quality-workflow`. Before freezing, Claude inspects the repo's CI,
+workspace scripts and called helpers, creates a local validation plan, and
+continues automatically. `/prepare-review` and `/validate-change full` also onboard
+automatically. Use `/quality-init` for setup alone or `/quality-init refresh` to
+reinspect the gate definitions. Setup alone does not run tests or reviewers.
 
-For an authoritative repository gate, copy `validation.commands.example` into
-the repository as `.claude/quality-workflow/validation.commands`. For a shared
-fallback used by every repository, create
-`~/.claude/quality-workflow/validation.commands`. Put one non-mutating command on
-each line, fastest first. Project configuration wins over global configuration.
-Explicit project configuration is preferred for important repositories because
-only the repository can define its authoritative gates.
+Generated plans live in Git-local `quality-workflow-init` metadata, not source:
+no untracked config file, commit, or per-repository installation is required.
+CI/manifests and recorded helper changes invalidate the plan so it is refreshed.
+Existing `.claude/quality-workflow/validation.commands` always wins and is never
+overwritten, including when empty. You can still maintain that file for a shared,
+version-controlled team configuration. Global defaults remain a baseline fallback,
+not proof of repository coverage.
 
-This distinction is deliberate: auto-detection is a useful baseline, but it is
-not allowed to call itself the repository's full merge gate. `/prepare-review`
-records a warning until `validation.commands` explicitly defines that gate, and
-the complete `/quality-workflow` stops rather than claiming merge readiness.
+Setup does not execute guessed commands or install tools. Claude inspects their
+safety and records commands with provenance; the helper validates and saves the
+plan. CI-only checks remain explicit gaps in the evidence and final report. Local
+validation passing does not prove hosted CI or branch protection passed. Genuine
+missing tools, unclear gates or failing tests still block; a missing config alone
+no longer asks you to do the setup manually.
 
 ## Configure deterministic analysis
 

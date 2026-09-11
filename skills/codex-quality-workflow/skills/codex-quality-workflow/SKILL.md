@@ -17,7 +17,14 @@ Modes from the user's request:
 - Review-only: prepare and independently review; report findings without repairs.
 - Prepare: freeze and assemble evidence only.
 - Freeze: run `scripts/freeze.sh` with the optional destination branch only.
-- Validate: run `scripts/verify.sh full` only.
+- Init: read `references/init-protocol.md` and initialize repository validation
+  with ENGINE=codex, then stop. With `init refresh`, refresh the generated plan.
+- Validate: initialize if needed, then run `scripts/verify.sh full` only.
+
+Full, review-only, prepare and validate modes automatically initialize before
+validation. Read `references/init-protocol.md` completely for that stage. Setup
+writes local Git metadata only; missing configuration is not a reason to ask the
+user to hand-write a command list. Freeze-only does not run initialization.
 
 Optional base argument is a branch name. Omit it to auto-detect. An initial clean
 committed implementation is required. Never commit, stash, or discard user work to

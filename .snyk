@@ -1,0 +1,284 @@
+# Snyk policy — https://docs.snyk.io/scan-fix-and-prevent/prevent/policies/the-.snyk-file
+version: v1.25.0
+
+# ── Canonical base (generated from nswds-devops snyk-policy/base.snyk) ─────
+# DO NOT EDIT THIS BLOCK IN A CONSUMER REPO. It is regenerated and delivered
+# by nswds-devops (.github/workflows/snyk-policy-sync.yml); local edits are
+# overwritten on the next fan-out and reported by the weekly canary.
+#
+# Repo-specific policy goes BELOW the "# repo-specific" marker that closes
+# this block, and is preserved verbatim by the sync. That split is the whole
+# reason this file is not carried by the ordinary file-sync in
+# .github/sync.yml: BetaHuhn/repo-file-sync-action overwrites whole files,
+# and several repos carry policy that is genuinely theirs (nswds-email-
+# framework's Snyk Code exclude for generated output, nswds-tokens' one
+# javascript/PT acceptance, nswds-app's transitive postcss ignores, and
+# dtl-sandbox's path-scoped js-yaml and npm-bundled entries).
+# See docs/config-single-source-of-truth.md — Mechanism C.
+#
+# NOTE: never add a '*:lic:*' catch-all. Snyk matches ignore keys as exact
+# issue IDs and does not support globs, so a catch-all is dead config that
+# reads as protection. Licence findings have to be enumerated, as below.
+
+ignore:
+  # The nanoid CWE-835 ignores (SNYK-JS-NANOID-18506894 / -18506897) were
+  # removed on 2026-08-31. They are obsolete, not merely expired: with the
+  # policy disabled entirely, neither advisory fires any more at the nanoid
+  # versions now in the tree (3.3.17 and 3.3.18 under postcss, verified by
+  # scanning with --ignore-policy). Snyk has since corrected the affected
+  # range, which had been <5.1.16 and wrongly swallowed the patched 3.x line.
+  # Do not re-add them speculatively -- if either advisory ever returns, it
+  # should be reported and re-triaged on the evidence at that time.
+
+  # ── Vulnerability acceptances ───────────────────────────────────────────
+  # undici, as vendored INSIDE the published `npm` package. semantic-release
+  # pulls @semantic-release/npm, which depends on the npm CLI, which bundles
+  # its own undici -- so `npm update undici` does not touch it and an
+  # `overrides` pin does not reach it. There is no local fix.
+  #
+  # This ACCEPTS A REAL VULNERABILITY; it is not a false positive. What makes
+  # it acceptable is the blast radius, not the severity: the path is release
+  # tooling that runs in CI against npm's own registry, never an app serving
+  # user traffic, and nothing here is shipped -- the published @nswds/*
+  # packages carry only their `files: ["dist"]` build output.
+  #
+  # Verified 2026-09-07: npm 11.19.1 is the newest 11.x and its own lockfile
+  # still pins undici 6.28.0, while @semantic-release/npm@13.1.5 requires
+  # `npm: ^11.6.2`. default.json blocks npm majors fleet-wide, so no Renovate
+  # PR can move it either. ON EXPIRY, re-check whether npm has bumped its
+  # vendored copy and DELETE these three entries if it has -- do not extend
+  # them reflexively.
+  #
+  # SCOPING -- these fail CLOSED. The `npm` segment is required, so a
+  # genuinely vulnerable undici arriving by any other route is still
+  # reported. Verified empirically against agile:
+  #   '* > npm > * > undici'                  suppressed all three
+  #   '* > bogus-not-a-package > * > undici'  suppressed nothing
+  #   '* > npm > node-gyp > undici'           suppressed nothing ON AGILE,
+  #                                           whose paths all run through
+  #                                           @npmcli/*. Do NOT read that as
+  #                                           fleet-wide: 'npm > node-gyp >
+  #                                           undici' IS a real path in 11
+  #                                           repos, so that scope is narrow,
+  #                                           not inert.
+  # A bare '*' would suppress undici everywhere and must never be used here.
+  #
+  # The leading '*' needs a non-empty prefix, which holds because `npm` is a
+  # direct dependency of NO repo in the fleet -- it is always reached through
+  # semantic-release, @semantic-release/npm or @workspace/semantic-release-
+  # config. A twin 'npm > * > undici' entry would be dead config today; add
+  # one only if npm ever becomes a direct dependency.
+  #
+  # WHERE THIS DOES AND DOES NOT LAND -- two separate gaps.
+  #
+  # 1. REACH. Delivery follows enrolment: this block reaches exactly the repos
+  #    keyed in snyk-policy/repos.json, which is the live list. Treat any count
+  #    written here as a dated snapshot and read that file for the truth.
+  #    The ordinary file-sync in .github/sync.yml deliberately does not carry
+  #    .snyk either, so an unenrolled repo receives NOTHING -- not even its
+  #    root file.
+  #
+  #    Snapshot 2026-09-16: all 29 repos in the fleet are enrolled, so every
+  #    repo carrying these advisories also carries this acceptance. That is a
+  #    snapshot, not an invariant -- a repo added to the fleet later receives
+  #    NOTHING until it is keyed in repos.json too, and one that already has a
+  #    .snyk needs a migrate directive carrying its fromSha to be converted
+  #    safely. Enrolling also wants the repo confirmed as imported into the
+  #    Snyk org.
+  #
+  # 2. DEPTH. This file lands at the repo ROOT (POLICY_PATH in
+  #    .github/scripts/snyk-policy.mjs), and Snyk resolves a policy per
+  #    manifest DIRECTORY. So in a workspace monorepo, `snyk test
+  #    --all-projects` scans every package with NO policy at all -- not merely
+  #    the odd finding. Measured 2026-09-08 before the fix: nswds-ui had 15
+  #    already-accepted findings open across seven workspaces, and
+  #    nswds-email-design 28 across eight.
+  #
+  #    THE FIX IS `--policy-path=.snyk`, which makes this one file apply to
+  #    every project in the run. Both monorepos now pass it in their snyk:check
+  #    and snyk:monitor scripts (nswds-ui#178, nswds-email-design#33) and both
+  #    are clear of depth-gap findings.
+  #
+  #    SCOPE OF THAT FIX, so nobody reads more into it: the flag takes effect
+  #    in those npm scripts. Verified 2026-09-08 that NO workflow in nswds-ui,
+  #    nswds-email-design or nswds-devops invokes either script. What gates a
+  #    PR instead is Snyk's SCM integration, and it never runs the CLI -- it
+  #    resolves policy per manifest directory on its own, so the flag never
+  #    reaches it. Treat the gap as closed for a CLI scan, not for those
+  #    checks.
+  #
+  #    Do not assume a fixed set of those contexts. code/snyk and security/snyk
+  #    are required in most enrolled repos, license/snyk in only one
+  #    (nswds-email-design), and a few require no Snyk check at all -- so "the
+  #    Snyk check will catch it" is not true everywhere. Read the repo's own
+  #    ruleset before relying on one.
+  #
+  #    POLICY: per-workspace .snyk = REJECTED; use --policy-path=.snyk
+  #
+  #    That line is asserted verbatim by tools/snyk-policy.test.mjs. It is the
+  #    machine-checkable part of this note: regex cannot read the intent of the
+  #    prose around it, so the declared policy is pinned instead. Reversing the
+  #    decision means editing a line that says REJECTED, which shows up in a
+  #    review rather than hiding in a reworded paragraph.
+  #
+  #    Do NOT instead add a .snyk per workspace. That is 8-9 near-duplicates of
+  #    this block which the fan-out does not manage at that depth, so they
+  #    drift the moment this file changes. Note also that --policy-path
+  #    OVERRIDES per-directory files: nswds-ui's apps/web/.snyk is inert while
+  #    the flag is set, which is harmless only because its nanoid entries no
+  #    longer fire at nanoid 3.3.18.
+  SNYK-JS-UNDICI-19635210:
+    - '* > npm > * > undici':
+        reason: undici vendored inside the npm CLI, reached only via semantic-release; no upstream fix (npm 11.19.1 still ships undici 6.28.0) and absent from every published artifact
+        expires: 2026-12-31T00:00:00.000Z
+  SNYK-JS-UNDICI-19635212:
+    - '* > npm > * > undici':
+        reason: undici vendored inside the npm CLI, reached only via semantic-release; no upstream fix (npm 11.19.1 still ships undici 6.28.0) and absent from every published artifact
+        expires: 2026-12-31T00:00:00.000Z
+  SNYK-JS-UNDICI-19635226:
+    - '* > npm > * > undici':
+        reason: undici vendored inside the npm CLI, reached only via semantic-release; no upstream fix (npm 11.19.1 still ships undici 6.28.0) and absent from every published artifact
+        expires: 2026-12-31T00:00:00.000Z
+
+  # ── Licence acceptances ─────────────────────────────────────────────────
+  # Weak-copyleft (MPL-2.0 / LGPL-3.0) and permissive (Artistic-2.0) licences
+  # on unmodified, transitively-installed build, CI and dev dependencies. They
+  # are not modified and not redistributed: the private apps in this fleet are
+  # not distributed at all, and every published package declares a narrow
+  # `files` allowlist that embeds none of them. The first-party @nswds/*
+  # MPL-2.0 findings are our own licence, chosen deliberately.
+  #
+  # Do NOT reduce this to "the app is private". Six packages here publish to
+  # npm -- @nswds/tokens, @nswds/ui, @nswds/app, @nswds/eslint-config,
+  # @nswds/metadata and @nswds/prettier-config -- so a fleet-wide
+  # non-distribution claim is false. Nor is `files: ["dist"]` the shared
+  # shape: only @nswds/tokens uses exactly that. The others allowlist their
+  # own entry points instead, which is why the claim above is about the
+  # allowlist being narrow rather than about any one spelling of it.
+  #
+  # Snyk matches ignore keys as EXACT issue IDs -- it does NOT support globs
+  # like '*:lic:*', which silently match nothing. Every ID must be listed.
+  # Regenerate with:
+  #   snyk test --all-projects --dev --ignore-policy --exclude=fixtures,.next
+
+  # LGPL-3.0 -- sharp libvips platform binaries (via next)
+  snyk:lic:npm:img:sharp-libvips-darwin-arm64:LGPL-3.0:
+    - '*':
+        reason: Unmodified dynamically-linked native library; not redistributed (build/runtime dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:img:sharp-libvips-darwin-x64:LGPL-3.0:
+    - '*':
+        reason: Unmodified dynamically-linked native library; not redistributed (build/runtime dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:img:sharp-libvips-linux-arm64:LGPL-3.0:
+    - '*':
+        reason: Unmodified dynamically-linked native library; not redistributed (build/runtime dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:img:sharp-libvips-linux-arm:LGPL-3.0:
+    - '*':
+        reason: Unmodified dynamically-linked native library; not redistributed (build/runtime dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:img:sharp-libvips-linux-ppc64:LGPL-3.0:
+    - '*':
+        reason: Unmodified dynamically-linked native library; not redistributed (build/runtime dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:img:sharp-libvips-linux-riscv64:LGPL-3.0:
+    - '*':
+        reason: Unmodified dynamically-linked native library; not redistributed (build/runtime dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:img:sharp-libvips-linux-s390x:LGPL-3.0:
+    - '*':
+        reason: Unmodified dynamically-linked native library; not redistributed (build/runtime dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:img:sharp-libvips-linux-x64:LGPL-3.0:
+    - '*':
+        reason: Unmodified dynamically-linked native library; not redistributed (build/runtime dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:img:sharp-libvips-linuxmusl-arm64:LGPL-3.0:
+    - '*':
+        reason: Unmodified dynamically-linked native library; not redistributed (build/runtime dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:img:sharp-libvips-linuxmusl-x64:LGPL-3.0:
+    - '*':
+        reason: Unmodified dynamically-linked native library; not redistributed (build/runtime dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+
+  # MPL-2.0 -- lightningcss and its platform binaries (via Tailwind)
+  snyk:lic:npm:lightningcss-android-arm64:MPL-2.0:
+    - '*':
+        reason: Prebuilt platform binary of lightningcss; unmodified, and not redistributed (build dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:lightningcss-darwin-arm64:MPL-2.0:
+    - '*':
+        reason: Prebuilt platform binary of lightningcss; unmodified, and not redistributed (build dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:lightningcss-darwin-x64:MPL-2.0:
+    - '*':
+        reason: Prebuilt platform binary of lightningcss; unmodified, and not redistributed (build dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:lightningcss-freebsd-x64:MPL-2.0:
+    - '*':
+        reason: Prebuilt platform binary of lightningcss; unmodified, and not redistributed (build dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:lightningcss-linux-arm-gnueabihf:MPL-2.0:
+    - '*':
+        reason: Prebuilt platform binary of lightningcss; unmodified, and not redistributed (build dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:lightningcss-linux-arm64-gnu:MPL-2.0:
+    - '*':
+        reason: Prebuilt platform binary of lightningcss; unmodified, and not redistributed (build dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:lightningcss-linux-arm64-musl:MPL-2.0:
+    - '*':
+        reason: Prebuilt platform binary of lightningcss; unmodified, and not redistributed (build dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:lightningcss-linux-x64-gnu:MPL-2.0:
+    - '*':
+        reason: Prebuilt platform binary of lightningcss; unmodified, and not redistributed (build dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:lightningcss-linux-x64-musl:MPL-2.0:
+    - '*':
+        reason: Prebuilt platform binary of lightningcss; unmodified, and not redistributed (build dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:lightningcss-win32-arm64-msvc:MPL-2.0:
+    - '*':
+        reason: Prebuilt platform binary of lightningcss; unmodified, and not redistributed (build dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:lightningcss-win32-x64-msvc:MPL-2.0:
+    - '*':
+        reason: Prebuilt platform binary of lightningcss; unmodified, and not redistributed (build dependency, absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:lightningcss:MPL-2.0:
+    - '*':
+        reason: Unmodified weak-copyleft build-time dependency; not redistributed (absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+
+  # MPL-2.0 -- axe-core (via eslint-config-next) and our own NSW DS packages
+  snyk:lic:npm:axe-core:MPL-2.0:
+    - '*':
+        reason: Unmodified weak-copyleft dev dependency; not redistributed (absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:nswds:eslint-config:MPL-2.0:
+    - '*':
+        reason: First-party NSW DS package; licence is our own and intentional
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:nswds:metadata:MPL-2.0:
+    - '*':
+        reason: First-party NSW DS package; licence is our own and intentional
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:nswds:prettier-config:MPL-2.0:
+    - '*':
+        reason: First-party NSW DS package; licence is our own and intentional
+        expires: 2027-08-31T00:00:00.000Z
+  snyk:lic:npm:nswds:tokens:MPL-2.0:
+    - '*':
+        reason: First-party NSW DS package; licence is our own and intentional
+        expires: 2027-08-31T00:00:00.000Z
+
+  # Artistic-2.0 -- npm, bundled inside semantic-release
+  snyk:lic:npm:npm:Artistic-2.0:
+    - '*':
+        reason: Permissive licence on a dev/CI-only dependency; not redistributed (absent from published artifacts)
+        expires: 2027-08-31T00:00:00.000Z
+
+  # repo-specific

@@ -15,7 +15,9 @@ runs explicitly inside this workflow. It does not enforce a global Codex Stop ho
    repository rules. Check `codex exec --help` is available. Do not launch a worker
    recursively from within a worker job.
 2. Follow `references/init-protocol.md` with ENGINE=codex to initialize or refresh
-   repository validation automatically. Then run `bash <skill>/scripts/freeze.sh [branch]`, then
+   repository validation automatically. Read `references/dependency-preflight.md`
+   and perform its check/bounded environment restore before freezing. Then run
+   `bash <skill>/scripts/freeze.sh [branch]`, then
    `bash <skill>/scripts/prepare-review.sh initial`. Read the printed manifest.
    Require ready=true. Full mode also requires validation.configured=true.
    Config priority is repo `.codex/quality-workflow`, then repo
@@ -91,7 +93,8 @@ Review-only mode stops with consolidated findings and coverage. Full mode contin
 4. Repairs get one attempt only. An error or partial repair stops the workflow;
    leave its diff available for inspection. Do not automatically retry writes.
 5. If gate definitions changed, refresh init using the protocol without weakening
-   checks. Run full verify in the parent. On success create candidate R-xxx using
+   checks. Run full verify in the parent. A concrete dependency-resolution failure
+   goes through dependency-preflight.md once; other failed gates stop. On success create candidate R-xxx using
    repair-state.mjs. Run `repair-review` with target=repair-diff and the candidate's
    base/head pair; inspect TWO-endpoint diff, never triple-dot. Pass the original
    finding as input. Only COMPLETE and zero findings authorizes snapshot accept.

@@ -17,6 +17,16 @@ script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
 project_commands="$repo_root/.claude/quality-workflow/validation.commands"
 commands_file=""
 if [[ "$mode" == "full" ]]; then commands_file="$(node "$script_dir/quality-init.mjs" claude resolve)"; fi
+dependency_fingerprint=""
+if [[ "$mode" == "full" ]]; then
+  if [[ -f package-lock.json || -f npm-shrinkwrap.json ]]; then
+    node "$script_dir/dependency-preflight.mjs" check || {
+      echo "Dependency preflight blocked validation. The parent should follow dependency-preflight.md before classifying this as a code failure." >&2
+      exit 78
+    }
+  fi
+  dependency_fingerprint="$(node "$script_dir/dependency-preflight.mjs" fingerprint)"
+fi
 ran=0
 
 workspace_fingerprint() {
@@ -32,9 +42,9 @@ workspace_fingerprint() {
 
 gate_fingerprint() {
   if [[ -f "$commands_file" ]]; then
-    { printf 'configured\n'; git hash-object "$commands_file"; } | git hash-object --stdin
+    { printf 'configured-dependencies-v1\n%s\n' "$dependency_fingerprint"; git hash-object "$commands_file"; } | git hash-object --stdin
   else
-    printf 'auto-detect-v2\n' | git hash-object --stdin
+    printf 'auto-detect-v3\n%s\n' "$dependency_fingerprint" | git hash-object --stdin
   fi
 }
 

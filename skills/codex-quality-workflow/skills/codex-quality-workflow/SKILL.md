@@ -19,12 +19,18 @@ Modes from the user's request:
 - Freeze: run `scripts/freeze.sh` with the optional destination branch only.
 - Init: read `references/init-protocol.md` and initialize repository validation
   with ENGINE=codex, then stop. With `init refresh`, refresh the generated plan.
-- Validate: initialize if needed, then run `scripts/verify.sh full` only.
+- Validate: initialize and perform dependency preflight, then run `scripts/verify.sh full`.
 
 Full, review-only, prepare and validate modes automatically initialize before
 validation. Read `references/init-protocol.md` completely for that stage. Setup
 writes local Git metadata only; missing configuration is not a reason to ask the
 user to hand-write a command list. Freeze-only does not run initialization.
+
+Before validation, read `references/dependency-preflight.md` and follow it. A
+missing installed dependency is an environment prerequisite, not automatically a
+code failure: the parent may perform one locked restore with required host
+permissions, verify source is unchanged, and continue. Never upgrade dependencies
+or enable arbitrary install scripts as part of this recovery.
 
 Optional base argument is a branch name. Omit it to auto-detect. An initial clean
 committed implementation is required. Never commit, stash, or discard user work to
@@ -38,4 +44,5 @@ selection. Do not silently select a different model to recover an error.
 
 Report evidence and outcomes plainly. Routine partial review recovery is automatic.
 Incomplete lanes block triage and a passed result. Stop for product decisions,
-failed gates, rejected repairs, unavailable CLI/authentication, or retry exhaustion.
+failed gates after dependency preflight, rejected repairs, unavailable
+CLI/authentication, or retry exhaustion.

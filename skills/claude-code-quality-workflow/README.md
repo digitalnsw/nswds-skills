@@ -69,6 +69,13 @@ manifest, skills, and agent definitions.
 
 ## Configure deterministic validation
 
+The full workflow now performs dependency preflight before validation. Missing npm
+workspace links or stale installed packages trigger one lockfile-preserving restore
+with required host permissions; no upgrades or automatic lifecycle scripts. Source
+and staging state are checked afterwards and validation reruns. Genuine gate
+failures still stop review. Init-only and Stop hooks never install dependencies.
+Other package managers require their own inspected frozen-install procedure.
+
 Just run `/quality-workflow`. Before freezing, Claude inspects the repo's CI,
 workspace scripts and called helpers, creates a local validation plan, and
 continues automatically. `/prepare-review` and `/validate-change full` also onboard

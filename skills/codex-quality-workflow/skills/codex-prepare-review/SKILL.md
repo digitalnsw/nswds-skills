@@ -5,7 +5,9 @@ description: Prepare immutable repository context, validation results and static
 
 Resolve the sibling `../codex-quality-workflow` skill directory. Read its
 `references/init-protocol.md` and initialize validation with ENGINE=codex first;
-only Git-local metadata may be written. Run its
+only Git-local metadata may be written during init. Then read the sibling's
+`references/dependency-preflight.md` and complete environment preparation (including
+one locked dependency restore if needed, with host approval). Run its
 `scripts/freeze.sh` with the optional destination branch, then its
 `scripts/prepare-review.sh initial` from the repository root. For a specifically
 requested final preparation use `prepare-review.sh final` without refreezing.

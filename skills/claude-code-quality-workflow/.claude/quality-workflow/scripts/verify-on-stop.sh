@@ -22,6 +22,10 @@ set +e
 verify_status=$?
 set -e
 if [[ "$verify_status" -ne 0 ]]; then
+  if [[ "$verify_status" -eq 78 ]]; then
+    echo "Dependency preflight needs attention. Follow dependency-preflight.md in the parent workflow; do not edit source to hide a missing dependency. The Stop hook does not install packages." >&2
+    exit 2
+  fi
   if [[ "$verify_status" -eq 75 ]]; then
     echo "A full validation is already running. Wait for it to finish; the stop hook will reuse its result instead of starting a competing run." >&2
     exit 2

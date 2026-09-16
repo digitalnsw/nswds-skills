@@ -23,7 +23,10 @@ For Codex, ENGINE is `codex` and SCRIPTS is this skill's scripts directory.
    remote writes or downloads as validation. Test/build output in ignored or
    temporary directories is allowed. Use scratch directories for checks requiring
    generated inputs; never delete user files. Do not silently omit a missing local
-   tool or failing gate. Report the precise dependency blocker; no auto-install.
+   tool or failing gate. Dependency installation is a separate parent-only
+   preparation stage: follow the adjacent dependency-preflight.md after init,
+   before validation. Its bounded locked restore is allowed with host permissions;
+   never embed installation in the gate list or run it from a reviewer.
 4. Account explicitly for CI-only checks (clean dependency installation, hosted
    services, credentials, PR metadata, remote policy) and truly inapplicable
    conditional jobs. They are exclusions with reasons, not passed checks. Do not

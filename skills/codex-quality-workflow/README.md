@@ -48,6 +48,13 @@ ESLint and Ruff are detected automatically. No analyzer is downloaded implicitly
 
 ## Repository gates and state
 
+Before validation, dependency preflight detects missing npm workspace links and
+stale installed packages. The parent can perform one lockfile-preserving restore
+with host permissions, without upgrades or automatic lifecycle scripts. It verifies
+source/staging state is unchanged, then reruns validation. Installation is never
+delegated to reviewers, hidden inside a gate, or repeated as a fix loop. Init-only
+does not install. Other managers need an inspected frozen-install procedure.
+
 Initialization is automatic before validation. `$codex-quality-workflow init`
 performs setup only; `init refresh` reinspects gate definitions. Codex reads CI,
 workspace manifests and called helpers, then saves a plan in Git-local

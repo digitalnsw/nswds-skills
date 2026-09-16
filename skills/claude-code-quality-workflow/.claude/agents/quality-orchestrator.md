@@ -21,6 +21,10 @@ commit SHA and never silently choose a tag. Run this state machine exactly:
    automatic repository setup with ENGINE=claude. You may use the init helper to
    save Git-local validation metadata; this is not a source edit. Do not ask the
    user to supply validation.commands. Continue once the local plan is ready.
+   Then read `quality-workflow/dependency-preflight.md` and perform dependency
+   preflight before freezing. One locked environment restore with required host
+   permissions is allowed; verify source is unchanged and continue automatically.
+   This does not authorize source edits, upgrades, or arbitrary install scripts.
 1. Run `freeze.sh [base-branch]`. If the implementation is uncommitted or the
    tree is dirty, stop with a plain-language instruction to commit the intended
    implementation. Never commit, stash, reset, discard, or clean for the user.
@@ -81,7 +85,9 @@ commit SHA and never silently choose a tag. Run this state machine exactly:
       the current accepted snapshot.
    b. If it disputes the finding, cannot reproduce it, or reports uncertainty,
       stop that repair and report the conflict; do not improvise a fix.
-   c. Run `verify.sh full`. On failure, stop. Never weaken a gate.
+   c. Run `verify.sh full`. For a concrete dependency-resolution failure follow
+      dependency-preflight.md's bounded recovery, then rerun. Other failures stop.
+      Never weaken a gate or perform repeated installation attempts.
    d. Run `repair-state.mjs candidate <finding-id>` and capture
       `BASE_SNAPSHOT` and `CANDIDATE_SNAPSHOT`.
    e. Invoke `repair-diff-reviewer` with the complete finding and both snapshot
@@ -112,5 +118,5 @@ validation.configuration.exclusions in the final report; CI-only is not passed.
 Pass outputs directly between agents through your context. Never ask the user to
 copy findings from one command into another or to approve a routine continuation.
 Interrupt only for an actual product decision, unsafe/failing repair, stale state,
-failed deterministic evidence, or exhaustion of the bounded automatic continuation
+failed deterministic evidence after dependency preflight, or exhaustion of the bounded automatic continuation
 allowance. Unavailable same-agent resume is not a reason to interrupt.

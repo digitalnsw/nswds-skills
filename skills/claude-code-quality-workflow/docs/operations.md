@@ -19,12 +19,16 @@ not pollute the project or travel to another clone. Re-run freeze in each clone.
 `/quality-workflow` runs freeze itself. The separate `/freeze-review` command is
 only needed when operating individual stages manually.
 
-## Preparation reports `READY=0`
+## Preparation and full validation disagree
 
-Open the evidence directory printed by `/prepare-review`. `validation.log` contains
-the full deterministic gate, `analyzers/` contains static-analysis output, and
-`manifest.json` identifies the exact base/head plus warnings. A failed validation,
-failed required analyzer, or command that mutated the reviewed state blocks review.
+Initial `/prepare-review` runs the quick safety phase so review can start without
+waiting for the whole suite. Its `validation.log` covers that phase. The workflow
+starts full validation concurrently and retains its separate receipt/log under
+Git-local state. `analyzers/` contains static-analysis output, and `manifest.json`
+identifies the exact base/head plus warnings. A failed full validation or required
+analyzer blocks repair/approval, not the concurrent read-only review. Unsafe or
+stale source blocks review. Follow the bundled
+`gate-failure.md` for one inspected build recovery and routing to triage/repair.
 
 A warning that validation is `generic-auto-detected` means the repository has not
 been initialized. `/quality-init` inspects and saves the gate plan; normal workflow,
@@ -72,9 +76,18 @@ cheap failing unit test. The repair agent must state why, preserve concrete stat
 or runtime evidence, make the smallest change, and run the strongest available
 checks. “It seems right” is not evidence.
 
+## Validation fails after a repair
+
+This is not yet proof that the repair introduced the failure. The parent follows
+`quality-workflow/gate-failure.md` automatically: preserve the pending diff and
+logs, inspect the failure, gather bounded reproduction evidence, then attribute
+the cause. Read-only diagnosis does not spend another source-repair attempt.
+A green rerun alone cannot dismiss an unexplained intermittent failure.
+
 ## A repair introduces another problem
 
-The orchestrator stops. It does not send the new problem to the repairer. The last
+Once causal evidence establishes a regression, the orchestrator stops further
+writes. It does not send the new problem to the repairer. The last
 accepted hidden snapshot remains recorded, while the rejected candidate remains in
 the working tree for inspection. Deliberately restore or revise that one repair,
 then rerun the pipeline. If it depends on unresolved intent, classify it as
@@ -89,8 +102,9 @@ Git object database and may eventually be pruned by normal Git maintenance.
 Put fast, authoritative commands in `validation.commands`; move very slow end-to-end
 or external-environment checks to CI and document them in `CLAUDE.md`. Temporarily
 set `QUALITY_SKIP_STOP_VERIFY=1` only when an intentional intermediate stop is
-more important than enforcing the gate. Always run `/validate-change full` before
-freeze and final review.
+more important than enforcing the gate. Full validation remains required for final
+acceptance; the orchestrator runs it through final preparation. Do not duplicate
+it immediately before that stage.
 
 ## Validation is already running
 

@@ -12,19 +12,27 @@ authorizes independent worker sessions for this workflow only.
 
 Modes from the user's request:
 
-- Default/full: prepare, review, triage, repair confirmed actionable findings,
-  validate each repair, and independently review the final accepted state.
+- Default/full: prepare, one independent review, parent triage, coherent repair
+  batches with parent verification and independent diff review, then full gates
+  and final review. Read references/repair-batches.md for this stage.
 - Review-only: prepare and independently review; report findings without repairs.
 - Prepare: freeze and assemble evidence only.
 - Freeze: run `scripts/freeze.sh` with the optional destination branch only.
 - Init: read `references/init-protocol.md` and initialize repository validation
   with ENGINE=codex, then stop. With `init refresh`, refresh the generated plan.
-- Validate: initialize if needed, then run `scripts/verify.sh full` only.
+- Validate: initialize and perform dependency preflight, then run `scripts/verify.sh full`;
+  apply `references/gate-failure.md` for safe environment recovery, never source repair.
 
 Full, review-only, prepare and validate modes automatically initialize before
 validation. Read `references/init-protocol.md` completely for that stage. Setup
 writes local Git metadata only; missing configuration is not a reason to ask the
 user to hand-write a command list. Freeze-only does not run initialization.
+
+Before validation, read `references/dependency-preflight.md` and follow it. A
+missing installed dependency is an environment prerequisite, not automatically a
+code failure: the parent may perform one locked restore with required host
+permissions, verify source is unchanged, and continue. Never upgrade dependencies
+or enable arbitrary install scripts as part of this recovery.
 
 Optional base argument is a branch name. Omit it to auto-detect. An initial clean
 committed implementation is required. Never commit, stash, or discard user work to
@@ -36,6 +44,21 @@ Pass the user's selected model identifier when known; otherwise explicitly repor
 that workers use the CLI-configured model, which may differ from the desktop
 selection. Do not silently select a different model to recover an error.
 
+For failed validation, read `references/gate-failure.md`: diagnose, attempt one
+safe build-output recovery if applicable, or automatically retry an occupied
+local test port through the repository's supported free-port mechanism. Never
+stop or reuse another project's server. Then continue initial read-only review
+when evidence is reviewable. In full mode confirmed gate defects enter normal
+triage and targeted repair. Failed gates block approval, not investigation.
+This also applies after a repair: automatically follow the post-repair diagnosis
+protocol in that reference before declaring the repair failed or pausing. The
+one-attempt rule prohibits repeated source fixes, not bounded investigation.
+
 Report evidence and outcomes plainly. Routine partial review recovery is automatic.
+Keep JSON internal; present Markdown findings and real progress counts. A worker
+deferring browser checks is not a failed implementation. Resume existing workflow
+state and known pending repairs using repair-batches.md; do not start by refreezing
+an already active run or replaying its completed reviews.
 Incomplete lanes block triage and a passed result. Stop for product decisions,
-failed gates, rejected repairs, unavailable CLI/authentication, or retry exhaustion.
+unsafe evidence, external prerequisites unresolved after safe recovery, rejected repairs, unavailable
+CLI/authentication, or retry exhaustion.

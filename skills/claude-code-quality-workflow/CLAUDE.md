@@ -38,13 +38,20 @@
 - A finding is actionable only when it names a violated contract, concrete
   trigger or state, observed result, expected result, and evidence.
 - Triage every finding as `CONFIRMED`, `REJECTED`, or `NEEDS_DECISION` before edits.
-- Repair only `CONFIRMED` findings. Handle one defect class per repair; instances
-  may be grouped only when cause and required outcome are identical.
+- Repair only `CONFIRMED` findings. Group at most five related findings into a
+  coherent batch when they share a subsystem, contract or causal dependency.
+  Preserve every finding and required outcome; unrelated repairs stay separate.
 - For testable behavior, observe a failing reproduction before changing production
   code. If reproduction is impractical, document why and use the strongest
   available deterministic evidence.
-- After the minimal repair, run targeted checks, affected checks, then the full
-  configured gate. Inspect only the repair diff before moving to another finding.
+- After a batch, the parent runs targeted and affected checks, then an independent
+  reviewer checks its exact diff before provisional checkpointing. Run the full
+  configured gate at cross-cutting integration checkpoints and final preparation,
+  not automatically after every finding. No final acceptance without full gates.
+- Browser/sandbox restrictions defer worker verification, not completed source
+  work. Parent verification resolves that handoff without another user question.
+- Keep JSON internal. Report findings, implemented work, verified checkpoints and
+  final acceptance separately in readable Markdown.
 - Do not let a reviewer fix its own findings or repeatedly review and mutate its
   own output. One final fresh whole-branch review is permitted after repairs.
 - Prefer `/quality-workflow` for the complete pipeline. It prepares repository

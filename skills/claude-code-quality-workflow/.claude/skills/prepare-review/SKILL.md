@@ -7,7 +7,11 @@ disable-model-invocation: true
 
 First read `${CLAUDE_SKILL_DIR}/../../quality-workflow/init-protocol.md` and initialize
 validation automatically with ENGINE=claude. Only Git-local setup metadata may be
-written. Then run `${CLAUDE_SKILL_DIR}/../../quality-workflow/scripts/prepare-review.sh ${ARGUMENTS:-initial}`.
+written during init. Then read `${CLAUDE_SKILL_DIR}/../../quality-workflow/dependency-preflight.md`
+and perform bounded environment preparation. Then run
+`${CLAUDE_SKILL_DIR}/../../quality-workflow/scripts/prepare-review.sh ${ARGUMENTS:-initial}`.
 Do not edit code. Report the evidence directory, exact base and head
-SHAs, validation scope, analyzer results, and every warning. `READY=0` blocks
-review; explain the failing evidence rather than asking a reviewer to reason past it.
+SHAs, validation scope, analyzer results, and every warning. On failure read
+`../../quality-workflow/gate-failure.md` relative to this skill for bounded
+environment recovery. `REVIEWABLE=1` allows initial diagnosis despite `READY=0`;
+only `READY=1` allows final approval. This command never authorizes source repair.

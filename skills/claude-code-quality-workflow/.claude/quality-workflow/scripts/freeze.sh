@@ -70,6 +70,13 @@ implementation_sha="$(git rev-parse HEAD)"
 state_dir="$(git rev-parse --git-path claude-quality-workflow)"
 mkdir -p "$state_dir"
 state_file="$state_dir/freeze.env"
+archive_dir="$state_dir/history/$(date +%s)-$$"
+for old_state in freeze.env repair-state.json repair-candidate.json repair-verification.json progress.md current-evidence.env; do
+  if [[ -f "$state_dir/$old_state" ]]; then
+    mkdir -p "$archive_dir"
+    mv "$state_dir/$old_state" "$archive_dir/$old_state"
+  fi
+done
 
 {
   printf 'BASE_REF=%s\n' "$base_ref"

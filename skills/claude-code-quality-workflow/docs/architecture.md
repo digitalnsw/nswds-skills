@@ -26,15 +26,15 @@ independent review (read-only) → structured, sourced findings
     ↓
 triage: CONFIRMED | REJECTED | NEEDS_DECISION
     ↓
-targeted repair (one confirmed defect class, write-enabled)
+scoped repair batch (1–5 related confirmed findings, write-enabled)
     ↓
-full deterministic validation → hidden candidate snapshot
+parent targeted/affected validation → hidden candidate snapshot
     ↓
-repair-diff review of exact accepted→candidate range (read-only)
+repair-diff review of exact checkpoint→candidate range (read-only)
     ↓
-accept snapshot or stop; never repair the repair
+provisional checkpoint → next batch; no final acceptance yet
     ↓
-final evidence preparation + one final whole-branch review (fresh, read-only)
+full final validation + one final whole-branch review → final acceptance
 ```
 
 The reviewer owns diagnosis. The repairer owns the smallest correct implementation.
@@ -47,7 +47,7 @@ Neither owns both.
 | Reviewer modifies code | Forked agent, `permissionMode: plan`, edit/write tools denied |
 | Reviewer prescribes a speculative rewrite | Finding schema requires outcome, not implementation |
 | False positive is repaired | Mandatory triage and independent reproduction |
-| Repair expands scope | One defect class, explicit prohibitions, repair-only diff review |
+| Repair expands scope | Explicit coherent batch, every finding retained, independent exact-diff review |
 | Model forgets validation | Post-edit and stop hooks call deterministic scripts |
 | LLM receives a raw diff with weak context | `/prepare-review` builds a versioned evidence manifest and repository context |
 | Static-analysis signal is lost | ESLint/Ruff plus configured CodeQL/Semgrep/custom outputs are attached to evidence |
@@ -72,11 +72,12 @@ rounds, round caps, and any instruction to keep mutating until findings disappea
 
 ## What “Copilot-like” means here
 
-This package reproduces the useful architecture, not GitHub's proprietary model or
-private implementation: an orchestrator gathers broad repository evidence,
-deterministic tools produce machine evidence, and high-reasoning independent agents
-review and triage it. The evidence manifest makes the inputs inspectable instead
-of hiding them in one oversized prompt.
+This package aims for useful findings with low orchestration overhead. It does
+not reproduce GitHub's proprietary model or claim measured parity. One reviewer
+reasons across nine passes using repository context and deterministic evidence;
+add specialists only when their scope justifies the cost. Compare finding
+precision and time-to-useful-report on real changes before claiming accuracy or
+speed gains over another product.
 
 The model remains responsible for semantic reasoning that linters cannot perform:
 tracing contracts, consumers, boundary behavior, test effectiveness, release

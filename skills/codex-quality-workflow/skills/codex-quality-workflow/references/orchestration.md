@@ -14,10 +14,23 @@ runs explicitly inside this workflow. It does not enforce a global Codex Stop ho
 1. Resolve the repo root and this skill directory. Read applicable AGENTS.md and
    repository rules. Check `codex exec --help` is available. Do not launch a worker
    recursively from within a worker job.
-2. Follow `references/init-protocol.md` with ENGINE=codex to initialize or refresh
-   repository validation automatically. Then run `bash <skill>/scripts/freeze.sh [branch]`, then
+2. First inspect existing Git-local repair/evidence state. If this is a continuation
+   of the same frozen HEAD with a known pending repair, follow repair-batches.md's
+   resume path; do not freeze again, rerun completed reviews or erase state.
+   For a new run, follow `references/init-protocol.md` with ENGINE=codex to initialize or refresh
+   repository validation automatically. Read `references/dependency-preflight.md`
+   and perform its check/bounded environment restore before freezing. Then run
+   `bash <skill>/scripts/freeze.sh [branch]`, then
    `bash <skill>/scripts/prepare-review.sh initial`. Read the printed manifest.
-   Require ready=true. Full mode also requires validation.configured=true.
+   Initial preparation intentionally runs quick validation. Immediately launch
+   `bash <skill>/scripts/run-full-validation.sh` in a managed nonblocking command
+   session while the default reviewer runs; retain its printed log/receipt. Do not
+   wait for it before starting review. Reconcile its exact-state result before
+   repairs: failure adds a scoped gate review/finding; passing is baseline evidence.
+   Read `references/gate-failure.md` when preparation fails. Initial lanes require
+   reviewable=true (or ready=true for legacy manifests), not passing gates.
+   Full mode also requires validation.configured=true. Final approval requires
+   ready=true; never interpret reviewable as passed.
    Config priority is repo `.codex/quality-workflow`, then repo
    `.claude/quality-workflow` (reuse the user's existing gate list), then the generated
    Git-local init plan. Global defaults alone do not count as repository setup.
@@ -43,12 +56,15 @@ Each job has this shape (substitute actual values, never these examples):
   "headSha": "actual head SHA",
   "target": "frozen-implementation",
   "inputs": [],
-  "model": "actual selected model identifier"
+  "model": "actual selected model identifier",
+  "reasoningEffort": "medium"
 }
 ```
 
-Omit model only when it is unknown; workers then use CLI configuration. Effort
-defaults to high. `inputs` are absolute paths to validated report or finding JSON
+Omit model only when it is unknown; workers then use CLI configuration. Broad
+senior review defaults to medium effort; other roles default to high. Override
+with `reasoningEffort` only for a concrete risk or latency reason. `inputs` are
+absolute paths to validated report or finding JSON
 files. Optional `timeoutSeconds` is 900 by default, 10–3600 supported. Each review
 has at most three attempts; this is a time/attempt budget, not Claude maxTurns.
 
@@ -58,55 +74,39 @@ updates during longer runs. Nonzero exit blocks dependent stages. Output JSON an
 event logs remain in the state directory; do not manually relay findings to users
 as instructions for the next stage.
 
-Always run senior. Add contract (passes 1,5,6), behavior (2,3,8), and gate (4,7,9)
-when the change touches those areas. Use all four for an exhaustive/high-risk review.
-Independent read-only jobs may run in parallel. Supply each its own scope and no
-other reviewer's conclusions. The runner retries partial or malformed final output
-using fresh workers with the same evidence, original assignment and valid progress.
-No report means no completed coverage: the original assigned scope remains due.
-Preserve earlier verified findings in a consolidated final report; reverify them.
+Default: run one senior reviewer covering all nine analytical passes. Add a
+specialist only for a concrete high-risk domain or an explicit exhaustive request;
+do not launch all four merely because the change touches code and tests. After
+failed validation, include gate for the failure domain and avoid duplicating its
+deep investigation in other lanes. Explain specialist scope in one sentence.
+Independent jobs may run in parallel. Keep conclusions independent; the runner
+continues partial review lanes up to three attempts, preserving their assigned
+coverage. Routine continuation needs no user approval.
 
 Only proceed after every required job returns a validated COMPLETE report with the
 right SHAs and assigned passes. The runner checks these requirements in code. A
 model's completeness claim still requires the parent to inspect the coverage note.
 Do not rerun a failed job to reset its retry counter. Treat exhausted jobs as blocked.
 
-## Triage and repair
+## Triage, repair and completion
 
-Review-only mode stops with consolidated findings and coverage. Full mode continues:
+Read references/repair-batches.md completely. It defines parent triage, coherent
+1–5 finding batches, separate implementation/verification states, source-bound
+targeted checks, independent batch review, provisional checkpoints and final
+acceptance. It replaces the former full-gate-per-finding loop.
 
-1. Union completed reports, deduplicate only the same cause/outcome and assign
-   unique R-001-style IDs. Keep reviewer provenance in evidence_sources. Save one
-   schema-shaped report and run `validate-findings.mjs` on it.
-2. Run a `triage` job with the union in `inputs` and the same base/head/target;
-   passes may be empty. Require every supplied ID exactly once with a disposition.
-   The runner verifies ID preservation. If any finding NEEDS_DECISION, return the
-   explicit question and pause before repairs. Never invent a contract.
-3. Run `node <skill>/scripts/repair-state.mjs init` once. For each CONFIRMED
-   BLOCKING/SHOULD_FIX finding, check the accepted state, save exactly that complete
-   finding to a file, and launch a `repair` job with that single input and the
-   accepted snapshot as baseSha. This worker must reproduce, add a meaningful
-   regression test, make the smallest fix, run targeted checks, and return its
-   report. It must not touch unrelated findings, weaken gates, commit, or push.
-4. Repairs get one attempt only. An error or partial repair stops the workflow;
-   leave its diff available for inspection. Do not automatically retry writes.
-5. If gate definitions changed, refresh init using the protocol without weakening
-   checks. Run full verify in the parent. On success create candidate R-xxx using
-   repair-state.mjs. Run `repair-review` with target=repair-diff and the candidate's
-   base/head pair; inspect TWO-endpoint diff, never triple-dot. Pass the original
-   finding as input. Only COMPLETE and zero findings authorizes snapshot accept.
-   A rejected repair stops here; no fix-the-fix loop.
-6. After accepted repairs, run prepare-review final and a fresh `final` job with
-   all nine passes, the final manifest and its exact SHAs. No further automatic
-   repair round. Without repairs the complete initial set is the final assessment;
-   still recheck that source/HEAD have not changed before claiming a passed result.
+A delivered repair with DEFERRED verification is normal: the parent validates it
+and continues automatically. A legacy PARTIAL report requires inspecting what
+remains; a known host-permission limitation resolved by parent verification is
+not a reason to stop. Never rerun the write worker just to change its status.
 
-## Final report
+## User-facing output
 
-State reviewed branch and SHAs, model selection, required lanes and attempts,
-commands and coverage gaps, triage dispositions, accepted repairs, final findings,
-and report paths. Clean means complete coverage and no remaining actionable or
-undecided findings with the configured gates passed. Repairs remain uncommitted.
+JSON is internal. Show readable findings before repairs and concise progress
+after batches. Use repair-state.mjs status for actual implementation, verification,
+independent-review and acceptance counts. Link progress.md plus evidence, not a
+raw JSON dump as the report. Final output states fixed and remaining issues,
+configured checks, gaps, reviewed SHAs and whether changes remain uncommitted.
 
 ## Engineering guidance
 

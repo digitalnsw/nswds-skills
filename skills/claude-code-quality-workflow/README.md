@@ -6,11 +6,12 @@ A globally installable, evidence-driven pipeline for high-confidence code change
 The central invariant is simple:
 
 > Reviewers define evidence-backed problems and cannot edit. A separate repair
-> agent changes code, one confirmed finding class at a time.
+> agent implements only a scoped batch of confirmed related findings.
 
-Version 2 adds the missing orchestration layer: repository-wide context,
-deterministic validation and analyzer evidence, immutable review snapshots, and
-automatic handoff between independent agents.
+Version 3 reduces repeated orchestration: one reviewer by default, parent triage,
+coherent repair batches, parent-owned checks and readable reports. Provisional
+checkpoints permit progress; full gates and final review still control acceptance.
+Copilot parity has not been measured or established.
 
 ## Install globally
 
@@ -69,6 +70,13 @@ manifest, skills, and agent definitions.
 
 ## Configure deterministic validation
 
+The full workflow now performs dependency preflight before validation. Missing npm
+workspace links or stale installed packages trigger one lockfile-preserving restore
+with required host permissions; no upgrades or automatic lifecycle scripts. Source
+and staging state are checked afterwards and validation reruns. Genuine gate
+failures still stop review. Init-only and Stop hooks never install dependencies.
+Other package managers require their own inspected frozen-install procedure.
+
 Just run `/quality-workflow`. Before freezing, Claude inspects the repo's CI,
 workspace scripts and called helpers, creates a local validation plan, and
 continues automatically. `/prepare-review` and `/validate-change full` also onboard
@@ -87,7 +95,8 @@ Setup does not execute guessed commands or install tools. Claude inspects their
 safety and records commands with provenance; the helper validates and saves the
 plan. CI-only checks remain explicit gaps in the evidence and final report. Local
 validation passing does not prove hosted CI or branch protection passed. Genuine
-missing tools, unclear gates or failing tests still block; a missing config alone
+missing tools or unclear gates still block setup; failing tests block approval,
+not initial diagnosis. A missing config alone
 no longer asks you to do the setup manually.
 
 ## Configure deterministic analysis
@@ -101,7 +110,8 @@ Each tab-separated line declares `required` or `advisory`, a name, and a command
 Commands receive the evidence directory, base/head SHAs, and diff path as
 environment variables. This is where to connect CodeQL, Semgrep, Sonar, custom
 architecture checks, or an existing security script. A failing required analyzer
-blocks review preparation; advisory output becomes evidence that reviewers must
+blocks approval, but safe evidence remains available for initial diagnosis;
+advisory output becomes evidence that reviewers must
 independently verify.
 
 The included hooks:
@@ -131,16 +141,19 @@ That command automatically:
 
 1. detects and freezes the destination base branch;
 2. runs `/prepare-review` to assemble the diff, expanded context, repository tree,
-   instructions, tests, callers/consumers, PR metadata, full validation, and
-   analyzer output;
+   instructions, tests, callers/consumers, PR metadata, quick validation, and
+   analyzer output, while the parent starts the full configured gate alongside review;
 3. sends that evidence to a fresh read-only reviewer;
-4. sends the complete structured report to a separate read-only triager;
-5. sends each confirmed blocking/should-fix defect to a fresh repair agent, one
-   at a time;
-6. validates and independently reviews only that repair's hidden snapshot before
-   accepting it;
-7. prepares the complete accepted state and runs one fresh final review when
-   repairs occurred.
+4. triages in the parent, using another reviewer only when needed;
+5. groups 1–5 related confirmed findings into each scoped repair batch;
+6. runs affected checks in the parent and independently reviews the batch before
+   a provisional checkpoint;
+7. runs full gates and one fresh final review before final acceptance.
+
+Worker browser restrictions hand verification to the parent, not back to you.
+JSON stays internal. You see readable findings and implemented/verified/reviewed/
+accepted counts. Legacy runs import their existing triage and resume their pending
+repair without reinitialization or repeating completed reviews.
 
 If a reviewer reaches its tool-turn limit, the orchestrator automatically continues
 the lane. It resumes the same context when that runtime feature exists; otherwise
@@ -151,8 +164,11 @@ cannot produce a clean or merge-ready result. Only repeated exhaustion stops the
 pipeline as an incomplete review.
 
 You do not copy and paste findings between commands. The workflow stops only when
-it needs a real product decision, finds a stale or unsafe state, encounters a
-failed gate, or rejects a repair. Repairs remain uncommitted for your inspection;
+it needs a real product decision, finds a stale or unsafe state, rejects a repair,
+or exhausts safe diagnosis/recovery of a failed gate. After repair validation
+fails, it automatically investigates the cause before deciding whether the repair
+regressed, the environment needs recovery, or a separate defect needs repair.
+It never retries assertions until green or weakens checks. Repairs remain uncommitted for your inspection;
 the workflow never commits or pushes.
 
 Usually the base is detected automatically. In repositories that merge to a
@@ -167,9 +183,9 @@ review no longer requires hand-feeding context.
 
 ## Review depth
 
-`/quality-workflow` always uses the senior reviewer and automatically routes the
-prepared evidence to relevant independent specialists. A high-risk or explicitly
-exhaustive review uses all three:
+`/quality-workflow` defaults to one senior reviewer across all nine passes. Add
+specialists for a concrete high-risk domain or explicitly exhaustive request,
+not just because the diff touches both code and tests:
 
 - `contract-reviewer`: claimed behavior, consumers, compatibility, release contract
 - `behavior-reviewer`: input domains, unmasked behavior, generated output
@@ -179,6 +195,10 @@ The orchestrator unions their findings, deduplicates only identical defects, and
 triages the union without asking you to relay anything. Parallel review raises
 recall but also raises false-positive volume, so every finding must still pass the
 evidence gate.
+
+The broad reviewer and orchestrator use medium effort as the balanced default.
+Targeted repair, specialist review, exact-diff review and final review retain high
+effort. The installed package inherits the configured model and does not pin one.
 
 ## Finding handoff
 

@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Bash, Agent
 disallowedTools: Edit, Write, NotebookEdit, Skill
 permissionMode: default
 model: inherit
-effort: high
+effort: medium
 maxTurns: 220
 ---
 
@@ -17,31 +17,40 @@ The user's optional argument is a destination base branch. When it is absent,
 let `freeze.sh` detect the remote default, `main`, or `master`. Never ask for a
 commit SHA and never silently choose a tag. Run this state machine exactly:
 
-0. Read `quality-workflow/init-protocol.md` beside the active scripts and perform
+0. Inspect existing Git-local repair/evidence state first. For a continuation of
+   the same frozen HEAD with a known pending repair, read repair-batches.md and
+   resume there; do not refreeze, rerun completed reviews or erase state.
+   For a new run, read `quality-workflow/init-protocol.md` beside the active scripts and perform
    automatic repository setup with ENGINE=claude. You may use the init helper to
    save Git-local validation metadata; this is not a source edit. Do not ask the
    user to supply validation.commands. Continue once the local plan is ready.
+   Then read `quality-workflow/dependency-preflight.md` and perform dependency
+   preflight before freezing. One locked environment restore with required host
+   permissions is allowed; verify source is unchanged and continue automatically.
+   This does not authorize source edits, upgrades, or arbitrary install scripts.
 1. Run `freeze.sh [base-branch]`. If the implementation is uncommitted or the
    tree is dirty, stop with a plain-language instruction to commit the intended
    implementation. Never commit, stash, reset, discard, or clean for the user.
-2. Run `prepare-review.sh initial`. Require `READY=1` and
+2. Run `prepare-review.sh initial`. If validation fails read
+   `quality-workflow/gate-failure.md`, perform its bounded recovery if applicable,
+   then continue initial investigation when `REVIEWABLE=1` even if `READY=0`.
+   Require `REVIEWABLE=1` (or `READY=1` for legacy evidence) and
    `VALIDATION_SCOPE=repository-configured` for the complete workflow. If only
    generic auto-detection is available, complete setup using the init protocol;
    never label partial coverage as
    the merge gate. Its evidence manifest is the canonical
    base/head/context/validation/static-analysis input.
-3. Invoke `senior-code-reviewer` once. Give it the evidence directory and any
-   user-supplied review scope. Route additional independent specialists from the
-   prepared evidence (run independent specialists in parallel when supported):
-   - `contract-reviewer` for changed public exports/types/config/schema/API,
-     dependency or release metadata, migrations, compatibility, or consumers;
-   - `behavior-reviewer` for parsers, validators, serializers, input boundaries,
-     authorization, generated/interpolated output, or guards/removals;
-   - `gate-reviewer` for tests, workflows, hooks, build/cache/generation/package/
-     publish plumbing, or when validation coverage is generic or uncertain.
-   A specialist must not see or anchor on another reviewer's conclusions. Capture
-   every result and its agent ID internally. For a high-risk or explicitly
-   exhaustive review, invoke all three.
+   Initial preparation contains quick validation. Immediately launch
+   `quality-workflow/scripts/run-full-validation.sh` as a background Bash task
+   while the default reviewer runs; do not delay review for it. Retain its
+   receipt/log and reconcile the exact-state result before repairs. A failure
+   adds scoped gate investigation; a pass is baseline evidence, not final proof.
+3. Default to senior-code-reviewer covering all nine passes. Add specialists only
+   for a concrete high-risk domain or an explicit exhaustive request. Failed
+   validation warrants gate-reviewer scoped to the failure. Do not launch all
+   four just because a diff touches code and tests; explain any added scope.
+   Independent reviewers may run in parallel and must not see each other's
+   conclusions. Capture evidence and agent IDs internally.
 4. Enforce the reviewer-lane completion protocol before triage:
    a. A lane is complete only when it returns parseable schema-shaped JSON with
       `completion.status=COMPLETE`, empty `remaining_scope`, the expected base/head
@@ -70,40 +79,25 @@ commit SHA and never silently choose a tag. Run this state machine exactly:
       repair, claim clean, or claim merge readiness.
    f. Wait for every required lane to complete, then union their complete findings
       without collapsing distinct defects. Partial findings never enter the union.
-5. Invoke `findings-triager` once with the complete union. Apply the same bounded
-   automatic-resumption protocol if triage is partial or truncated. Preserve every
-   field and require every supplied finding ID to receive exactly one disposition.
-   Validate structure with `validate-findings.mjs` if the output was saved to a
-   file. Never repair `REJECTED`, `NEEDS_DECISION`, or `WORTH_KNOWING` findings.
-6. If there are confirmed `BLOCKING` or `SHOULD_FIX` findings, run
-   `repair-state.mjs init`. Process them one at a time, highest severity first:
-   a. Invoke `targeted-repairer` with exactly one complete confirmed finding and
-      the current accepted snapshot.
-   b. If it disputes the finding, cannot reproduce it, or reports uncertainty,
-      stop that repair and report the conflict; do not improvise a fix.
-   c. Run `verify.sh full`. On failure, stop. Never weaken a gate.
-   d. Run `repair-state.mjs candidate <finding-id>` and capture
-      `BASE_SNAPSHOT` and `CANDIDATE_SNAPSHOT`.
-   e. Invoke `repair-diff-reviewer` with the complete finding and both snapshot
-      SHAs. It must inspect only `git diff BASE_SNAPSHOT CANDIDATE_SNAPSHOT`.
-      Apply the same automatic-resumption protocol when its report is partial,
-      malformed, truncated, or turn-limited.
-   f. Accept only a schema-valid report with `completion.status=COMPLETE` and an
-      empty `findings` array by running
-      `repair-state.mjs accept <finding-id>`. If the reviewer finds a regression,
-      stop and report it. Do not repair the repair or begin a convergence loop.
-7. Run `prepare-review.sh final`. Require `READY=1`. It reviews the frozen base
-   against the last accepted hidden snapshot, including uncommitted accepted
-   repairs without changing the user's index or making a branch commit.
-8. If repairs occurred, invoke `final-code-reviewer` once using the final evidence
-   and apply the same bounded automatic-resumption and completion-validation
-   protocol. A partial final review blocks completion.
-   If no repairs occurred, the complete initial review set is the final review; do
-   not duplicate it merely to spend another model call.
-9. Return one consolidated report: exact base/head reviewed, validation coverage,
-   analyzer outcomes, confirmed/rejected/decision findings, accepted repairs,
-   final findings, per-lane continuation counts, and explicit residual gaps. State that repairs remain
-   uncommitted for user inspection. Never commit, push, create a PR, or deploy.
+5. Read quality-workflow/repair-batches.md completely and follow it. The parent
+   triages and groups coherent findings; use findings-triager only when an
+   independent second opinion is warranted. Show human-readable findings before
+   repairs. JSON stays internal, never the primary user-facing report.
+6. Implement batches of 1–5 related confirmed findings, verify targeted checks in
+   the parent, review each exact batch independently and record provisional
+   checkpoints with repair-state.mjs. Browser permission limits defer verification;
+   they do not make completed source work PARTIAL. Automatically use parent
+   verification and continue independent review without asking the user.
+7. Follow the same reference to resume legacy PARTIAL reports from existing
+   evidence without another write attempt. Diagnose genuine incomplete work;
+   never relabel it complete merely because unrelated tests passed.
+8. Run prepare-review final once after all batches; require READY=1 and one
+   COMPLETE clean final review before repair-state.mjs finalize. Do not pre-run
+   another full suite immediately before final preparation.
+9. Report readable progress and a final Markdown summary with actual findings
+   found/implemented/verified/reviewed/accepted, remaining decisions, checks and
+   coverage gaps. Use repair-state.mjs status and link progress.md/evidence.
+   Checkpoints are provisional, not merge approval. Never commit, push or deploy.
 
 If gate definitions change during repairs, refresh the local plan using the init
 protocol before validation, preserving the gate set. Include the manifest's
@@ -111,6 +105,7 @@ validation.configuration.exclusions in the final report; CI-only is not passed.
 
 Pass outputs directly between agents through your context. Never ask the user to
 copy findings from one command into another or to approve a routine continuation.
-Interrupt only for an actual product decision, unsafe/failing repair, stale state,
-failed deterministic evidence, or exhaustion of the bounded automatic continuation
+Interrupt only for an actual product decision, an unsafe repair or evidenced
+regression, stale state, a separately diagnosed defect requiring repair authority,
+external prerequisites unresolved after safe recovery, or exhaustion of the bounded automatic continuation
 allowance. Unavailable same-agent resume is not a reason to interrupt.

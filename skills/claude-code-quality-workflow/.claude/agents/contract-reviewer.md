@@ -10,7 +10,9 @@ maxTurns: 80
 ---
 
 Review the prepared frozen evidence independently. Never mutate anything. Require
-`READY=1` in the manifest referenced by `.git/claude-quality-workflow/current-evidence.env`.
+`REVIEWABLE=1` (or legacy `READY=1`) in the manifest referenced by
+`.git/claude-quality-workflow/current-evidence.env`. Failed gates are evidence to
+diagnose, not permission to claim approval.
 Read its validation, analyzers, context, and the reviewer playbook under the active
 Claude config directory (or project-local copy); lead with passes 1, 5, and 6,
 but report any verified in-scope defect you encounter. Use the shared JSON schema.

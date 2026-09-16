@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { selectValidation } from "./quality-init.mjs";
 
 const target = process.argv[2] ?? "initial";
+const preparationStarted = Date.now();
 if (!new Set(["initial", "final"]).has(target)) {
   console.error("usage: prepare-review.sh [initial|final]");
   process.exit(2);
@@ -46,6 +47,7 @@ try {
     if (check.status !== 0) throw new Error("stale freeze: " + check.stderr);
   }
   const currentHead = git(["rev-parse", "HEAD"]);
+  if (currentHead !== frozen.IMPLEMENTATION_SHA) throw new Error("HEAD moved after freeze; start a new frozen review");
   let head = frozen.IMPLEMENTATION_SHA;
   let acceptedRepairState = false;
 
@@ -68,7 +70,8 @@ try {
 
   // repair-state.json is JSON; resolve the accepted snapshot after the validation above.
   if (target === "final" && existsSync(join(stateDir, "repair-state.json"))) {
-    head = JSON.parse(readFileSync(join(stateDir, "repair-state.json"), "utf8")).acceptedCommit;
+    const repairs = JSON.parse(readFileSync(join(stateDir, "repair-state.json"), "utf8"));
+    head = repairs.checkpointCommit ?? repairs.acceptedCommit;
   }
 
   const base = frozen.BASE_SHA;
@@ -130,7 +133,11 @@ try {
   }
   writeFileSync(join(evidenceDir, "pull-request.json"), `${JSON.stringify(pullRequest, null, 2)}\n`);
 
-  const verify = run(join(workflowDir, "scripts", "verify.sh"), ["full", "--reuse"], { cwd: repo });
+  // Evidence must contain this run's actual gate output, not a cached summary.
+  const validationStarted = Date.now();
+  const validationPhase = target === "initial" ? "quick" : "full";
+  const verify = run(join(workflowDir, "scripts", "verify.sh"), [validationPhase], { cwd: repo });
+  const validationDurationMs = Date.now() - validationStarted;
   writeFileSync(join(evidenceDir, "validation.log"), `${verify.stdout}${verify.stderr}`);
   const validationSelection = selectValidation(repo, workflowDir, 'codex');
   const validationConfigured = validationSelection.status === 'READY';
@@ -190,14 +197,23 @@ try {
   const warnings = [];
   for (const gap of validationSelection.exclusions) warnings.push(`Not verified locally: ${gap.name} — ${gap.reason} (${gap.source})`);
   if (!validationConfigured) warnings.push("Validation used generic auto-detection, not a repository-defined merge-gate command list.");
+  if (target === "initial") warnings.push("Initial evidence contains quick validation only. The parent must run the configured full gate concurrently with review and reconcile it before repairs.");
   if (analyzerResults.length === 0) warnings.push("No ESLint, Ruff, or configured static analyzer produced structured evidence.");
   if (!repositoryStateSafe) warnings.push("A deterministic command changed the reviewed repository state; evidence is not safe to review.");
   const ready = verify.status === 0 && !requiredAnalyzerFailure && repositoryStateSafe;
+  // Failed checks are review evidence, not permission to certify the branch.
+  // Busy/prerequisite/launch failures have not provided usable gate evidence.
+  const validationAttempted = Number.isInteger(verify.status) && verify.status >= 0 && verify.status < 126 && ![75, 78].includes(verify.status);
+  const reviewable = repositoryStateSafe && validationConfigured && validationAttempted;
+  if (!ready && reviewable) warnings.push("Validation or required analysis failed. Initial diagnosis/review may proceed; final approval is blocked.");
   const manifest = {
     schemaVersion: 1,
+    timings: { preparationMs: Date.now() - preparationStarted, validationMs: validationDurationMs },
     createdAt: new Date().toISOString(),
     target,
     ready,
+    reviewable,
+    repositoryStateSafe,
     repository: repo,
     baseBranch: frozen.BASE_REF,
     baseSha: base,
@@ -216,6 +232,7 @@ try {
     },
     validation: {
       status: verify.status,
+      phase: validationPhase,
       configured: validationConfigured,
       configuration: validationSelection,
       output: "validation.log"
@@ -230,6 +247,7 @@ try {
     `BASE_SHA=${base}`,
     `HEAD_SHA=${head}`,
     `READY=${ready ? 1 : 0}`,
+    `REVIEWABLE=${reviewable ? 1 : 0}`,
     ""
   ].join("\n"));
 
@@ -242,6 +260,7 @@ try {
   console.log(`ANALYZERS=${analyzerResults.map((item) => `${item.name}:${item.outcome}`).join(",") || "none"}`);
   for (const warning of warnings) console.log(`WARNING=${warning}`);
   console.log(`READY=${ready ? 1 : 0}`);
+  console.log(`REVIEWABLE=${reviewable ? 1 : 0}`);
   if (!ready) process.exit(1);
 } catch (error) {
   console.error(`prepare-review: ${error.message}`);

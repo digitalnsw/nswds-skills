@@ -14,7 +14,8 @@ required outcome and let a separate repair agent choose the smallest solution.
 ## Establish the immutable target
 
 Read `.git/claude-quality-workflow/current-evidence.env`, then the referenced
-`manifest.json`. Require `READY=1`. The manifest's base/head snapshots are the
+`manifest.json`. Initial review requires `REVIEWABLE=1` (or legacy `READY=1`);
+final review requires `READY=1`. The manifest's base/head snapshots are the
 immutable target for both initial and final review; never substitute the current
 branch name or working-tree state. State both SHAs.
 
@@ -29,10 +30,11 @@ the underlying repository files needed to verify them:
 - callers and consumers outside the changed files.
 - full deterministic validation output and every static-analysis artifact.
 
-If the evidence manifest is missing, not ready, inconsistent, or the accepted
+If the evidence manifest is missing, not reviewable, inconsistent, or the accepted
 snapshot moved, stop and report that preparation must be rerun. Treat analyzer
 output as leads: independently verify an issue before reporting it. A failed
-required gate blocks review rather than becoming an LLM opinion.
+required gate blocks approval, not initial investigation. Diagnose the failed
+command and report verified causes as findings; never treat unrun gates as passed.
 
 ## Nine review passes
 

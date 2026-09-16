@@ -46,6 +46,14 @@ if (!object(report?.review)) {
   if (!sha.test(report.review.head_sha ?? "")) errors.push("review.head_sha must be a 40-64 character hexadecimal SHA");
   checkText(report.review.reviewer, "review.reviewer");
   if (!targets.has(report.review.target)) errors.push("review.target is invalid");
+  if (report.review.target === "repair-diff") {
+    checkStringArray(report.review.assigned_finding_ids, "review.assigned_finding_ids", false);
+    const ids = report.review.assigned_finding_ids;
+    if (Array.isArray(ids)) {
+      if (ids.some((id) => !findingId.test(id))) errors.push("review.assigned_finding_ids must contain finding IDs matching R-001");
+      if (new Set(ids).size !== ids.length) errors.push("review.assigned_finding_ids must not contain duplicates");
+    }
+  }
 }
 
 if (!object(report?.completion)) {

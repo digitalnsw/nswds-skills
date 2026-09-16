@@ -1,0 +1,6 @@
+{
+  "url": "https://example.com/Color/API?token=AbC",
+  "colorName": "Color",
+  "placeholder": "{firstName}",
+  "createdAt": "2026-09-16T09:00:00Z"
+}

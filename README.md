@@ -36,6 +36,7 @@ cd nswds-skills/skills/claude-code-quality-workflow   # or skills/codex-quality-
 
 | Skill | What it does |
 | --- | --- |
+| [australian-style-manual](skills/australian-style-manual/SKILL.md) | Assesses every content item in the requested scope against the Australian Government Style Manual and applies necessary corrections. Covers prose, interface text, forms, metadata and accessibility text, with official source guidance and explicit coverage reporting. |
 | [dependency-update-review](skills/dependency-update-review/SKILL.md) | Full pull-request-depth review of dependency updates (Renovate/Dependabot bumps, manual version changes, lockfile-only updates). Scales review depth to risk, researches every version in the range, verifies impact against the actual codebase, and never commits migration work to a bot-owned branch. |
 | [pr-review-feedback](skills/pr-review-feedback/SKILL.md) | Works through unresolved review feedback on your own PR. Treats every reviewer comment as a hypothesis, validates each against the current branch, then (after approval) implements confirmed fixes, replies to every thread, and resolves the ones that no longer apply. |
 | [handover-docs](skills/handover-docs/SKILL.md) | Writes project documentation as a current-state technical knowledgebase for an incoming developer or client — never a project journal. No dated entries, no PR references, no fixed issues retained as history. |
@@ -77,3 +78,5 @@ The package's skills, agents, schemas and runtime scripts sit under `.claude/` (
 Skills in this collection are deliberately tool-agnostic and org-agnostic: they must not reference specific repositories, organisations, or machines. Supporting material lives in the skill's `references/` directory and is linked from the SKILL.md.
 
 Workflow packages target one agent by design, but are held to the same org-agnostic rule. Each carries its own README, installer and self-test.
+
+The Australian Style Manual skill includes [opt-in behavioural evaluations](skills/australian-style-manual/evals/README.md) for assessment-only and editing requests, with checks for protected content and unintended file changes.

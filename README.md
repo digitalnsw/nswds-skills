@@ -36,6 +36,7 @@ cd nswds-skills/skills/claude-code-quality-workflow   # or skills/codex-quality-
 
 | Skill | What it does |
 | --- | --- |
+| [wcag-technical-audit](skills/wcag-technical-audit/SKILL.md) | Audits web experiences against WCAG 2.2 AA by default, with automated, keyboard, visual and screen-reader testing, complete journey coverage, evidence-backed findings and a criterion-level coverage checker. Supports A and AAA targets and explicitly reports unverified checks. |
 | [australian-style-manual](skills/australian-style-manual/SKILL.md) | Assesses every content item in the requested scope against the Australian Government Style Manual and applies necessary corrections. Covers prose, interface text, forms, metadata and accessibility text, with official source guidance and explicit coverage reporting. |
 | [dependency-update-review](skills/dependency-update-review/SKILL.md) | Full pull-request-depth review of dependency updates (Renovate/Dependabot bumps, manual version changes, lockfile-only updates). Scales review depth to risk, researches every version in the range, verifies impact against the actual codebase, and never commits migration work to a bot-owned branch. |
 | [pr-review-feedback](skills/pr-review-feedback/SKILL.md) | Works through unresolved review feedback on your own PR. Treats every reviewer comment as a hypothesis, validates each against the current branch, then (after approval) implements confirmed fixes, replies to every thread, and resolves the ones that no longer apply. |

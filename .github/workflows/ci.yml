@@ -1,0 +1,24 @@
+# Synced from digitalnsw/nswds-devops — DO NOT EDIT in this repo.
+# The implementation lives in that repo's reusable-ci.yml.
+# Branch rulesets require this job ("install / install") — renaming the job
+# here orphans every ruleset that references it.
+name: CI
+
+on:
+  pull_request:
+
+# Rapid successive pushes to a PR previously ran full duplicate 4-job CI to
+# completion; only the latest push's run matters for the merge gate, so
+# supersede in-flight runs. Lives HERE (not in the reusable) because
+# workflow-level concurrency in a called workflow is not applied — the run
+# belongs to this caller.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    uses: digitalnsw/nswds-devops/.github/workflows/reusable-ci.yml@v1

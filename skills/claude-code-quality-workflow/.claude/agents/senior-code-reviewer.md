@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Bash
 disallowedTools: Edit, Write, NotebookEdit, Skill
 permissionMode: plan
 model: inherit
-effort: high
+effort: medium
 maxTurns: 90
 ---
 

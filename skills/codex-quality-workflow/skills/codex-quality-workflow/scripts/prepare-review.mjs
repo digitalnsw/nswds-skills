@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { selectValidation } from "./quality-init.mjs";
 
 const target = process.argv[2] ?? "initial";
+const preparationStarted = Date.now();
 if (!new Set(["initial", "final"]).has(target)) {
   console.error("usage: prepare-review.sh [initial|final]");
   process.exit(2);
@@ -69,7 +70,8 @@ try {
 
   // repair-state.json is JSON; resolve the accepted snapshot after the validation above.
   if (target === "final" && existsSync(join(stateDir, "repair-state.json"))) {
-    head = JSON.parse(readFileSync(join(stateDir, "repair-state.json"), "utf8")).acceptedCommit;
+    const repairs = JSON.parse(readFileSync(join(stateDir, "repair-state.json"), "utf8"));
+    head = repairs.checkpointCommit ?? repairs.acceptedCommit;
   }
 
   const base = frozen.BASE_SHA;
@@ -132,7 +134,10 @@ try {
   writeFileSync(join(evidenceDir, "pull-request.json"), `${JSON.stringify(pullRequest, null, 2)}\n`);
 
   // Evidence must contain this run's actual gate output, not a cached summary.
-  const verify = run(join(workflowDir, "scripts", "verify.sh"), ["full"], { cwd: repo });
+  const validationStarted = Date.now();
+  const validationPhase = target === "initial" ? "quick" : "full";
+  const verify = run(join(workflowDir, "scripts", "verify.sh"), [validationPhase], { cwd: repo });
+  const validationDurationMs = Date.now() - validationStarted;
   writeFileSync(join(evidenceDir, "validation.log"), `${verify.stdout}${verify.stderr}`);
   const validationSelection = selectValidation(repo, workflowDir, 'codex');
   const validationConfigured = validationSelection.status === 'READY';
@@ -192,6 +197,7 @@ try {
   const warnings = [];
   for (const gap of validationSelection.exclusions) warnings.push(`Not verified locally: ${gap.name} — ${gap.reason} (${gap.source})`);
   if (!validationConfigured) warnings.push("Validation used generic auto-detection, not a repository-defined merge-gate command list.");
+  if (target === "initial") warnings.push("Initial evidence contains quick validation only. The parent must run the configured full gate concurrently with review and reconcile it before repairs.");
   if (analyzerResults.length === 0) warnings.push("No ESLint, Ruff, or configured static analyzer produced structured evidence.");
   if (!repositoryStateSafe) warnings.push("A deterministic command changed the reviewed repository state; evidence is not safe to review.");
   const ready = verify.status === 0 && !requiredAnalyzerFailure && repositoryStateSafe;
@@ -202,6 +208,7 @@ try {
   if (!ready && reviewable) warnings.push("Validation or required analysis failed. Initial diagnosis/review may proceed; final approval is blocked.");
   const manifest = {
     schemaVersion: 1,
+    timings: { preparationMs: Date.now() - preparationStarted, validationMs: validationDurationMs },
     createdAt: new Date().toISOString(),
     target,
     ready,
@@ -225,6 +232,7 @@ try {
     },
     validation: {
       status: verify.status,
+      phase: validationPhase,
       configured: validationConfigured,
       configuration: validationSelection,
       output: "validation.log"

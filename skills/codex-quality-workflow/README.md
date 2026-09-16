@@ -30,21 +30,35 @@ the installed skills do not appear in its picker.
 
 ## What runs
 
-The main conversation prepares evidence and coordinates independent Codex CLI
-workers. Senior and relevant specialist reviewers run in read-only sandboxes.
+The main conversation prepares quick evidence, starts the full configured gate
+alongside review, and coordinates independent Codex CLI
+workers. One senior reviewer is the default; add specialists only for a justified
+high-risk domain or explicit exhaustive request. Reviewers remain read-only.
 The runner saves their reports, verifies completion and snapshot IDs, and retries
 partial/malformed output automatically, up to three attempts. Valid earlier findings
 travel into the continuation; narration contributes no completed coverage.
 
-The triager must account for every finding. A separate workspace-write worker
-repairs one confirmed defect, once. The parent validates, captures the candidate,
-and obtains an independent repair review before acceptance. A final fresh review
-checks the whole accepted change. Failed validation triggers automatic bounded
+The parent triages, using another reviewer only when a second opinion is needed.
+A workspace-write worker implements a coherent batch of 1–5 related findings.
+Worker browser restrictions defer verification to the parent, not the user.
+Parent targeted checks and independent diff review establish provisional
+checkpoints. Full gates run at cross-cutting integration checkpoints and final
+preparation, not automatically per finding. Final review controls acceptance.
+Failed validation triggers automatic bounded
 diagnosis before a repair is judged failed: inspect the assertion, compare the
 pending diff and gather reproduction evidence. Proven regressions, disputed
 repairs and separately diagnosed defects that need new repair authority still
 block acceptance; a passing retry never erases an unexplained intermittent failure.
 Repairs remain uncommitted, and the user's staging area stays under their control.
+
+Reports are Markdown with separate counts for findings, implementation,
+verification, independent review and acceptance. JSON is internal evidence.
+Legacy paused runs import their existing triage and resume the known diff and
+completed reviews. They do not reinitialize or replay a write worker just to
+replace PARTIAL with another status label.
+
+This removes orchestration overhead, not a measured claim of Copilot parity.
+Preparation, workers and parent checks retain timings for real-run comparison.
 
 The analytical content preserves all nine review passes from the Claude package.
 CodeQL/Semgrep/custom analyzers can be supplied using analysis.commands; installed
@@ -85,8 +99,10 @@ They share project files but maintain independent workflow state.
 ## Model and permissions
 
 Workers use an explicit model from their job packet when supplied. Otherwise they
-use the CLI's configured model, which can differ from the desktop selection. High
-reasoning effort is requested per worker. No new model is pinned by installation.
+use the CLI's configured model, which can differ from the desktop selection. The
+default broad review uses medium reasoning effort for a balanced speed/quality
+profile; targeted repairs, specialist reviews and final review use high effort.
+A job can override this with `reasoningEffort`. No model is pinned by installation.
 Review workers run with read-only filesystem access; repairs use workspace-write.
 Workers have no permission escalation. If host sandbox policy prevents launching
 the CLI or writing Git state, the workflow reports that limitation; it does not

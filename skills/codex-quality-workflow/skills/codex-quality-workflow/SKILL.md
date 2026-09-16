@@ -12,8 +12,9 @@ authorizes independent worker sessions for this workflow only.
 
 Modes from the user's request:
 
-- Default/full: prepare, review, triage, repair confirmed actionable findings,
-  validate each repair, and independently review the final accepted state.
+- Default/full: prepare, one independent review, parent triage, coherent repair
+  batches with parent verification and independent diff review, then full gates
+  and final review. Read references/repair-batches.md for this stage.
 - Review-only: prepare and independently review; report findings without repairs.
 - Prepare: freeze and assemble evidence only.
 - Freeze: run `scripts/freeze.sh` with the optional destination branch only.
@@ -54,6 +55,10 @@ protocol in that reference before declaring the repair failed or pausing. The
 one-attempt rule prohibits repeated source fixes, not bounded investigation.
 
 Report evidence and outcomes plainly. Routine partial review recovery is automatic.
+Keep JSON internal; present Markdown findings and real progress counts. A worker
+deferring browser checks is not a failed implementation. Resume existing workflow
+state and known pending repairs using repair-batches.md; do not start by refreezing
+an already active run or replaying its completed reviews.
 Incomplete lanes block triage and a passed result. Stop for product decisions,
 unsafe evidence, external prerequisites unresolved after safe recovery, rejected repairs, unavailable
 CLI/authentication, or retry exhaustion.

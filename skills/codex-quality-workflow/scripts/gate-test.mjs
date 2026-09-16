@@ -18,7 +18,7 @@ const git=(...args)=>run('git',args);
 const save=(path,text)=>{mkdirSync(dirname(join(repo,path)),{recursive:true});writeFileSync(join(repo,path),text);};
 const commit=()=>{git('add','.');git('commit','-m','fixture');};
 const scripts=join(skill,'scripts');
-const prepare=(target='initial')=>run('node',[join(scripts,'prepare-review.mjs'),target],1);
+const prepare=(target='initial',expected=target==='initial'?0:1)=>run('node',[join(scripts,'prepare-review.mjs'),target],expected);
 git('init','-b','main');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
 save('source.txt','base\n');save('.gitignore','generated/\n');commit();
 git('switch','-c','feature');
@@ -32,9 +32,11 @@ const evidence=()=>{
  return {path:join(dir,'manifest.json'),...JSON.parse(readFileSync(join(dir,'manifest.json'),'utf8'))};
 };
 prepare();let initial=evidence();
-assert.equal(initial.ready,false);assert.equal(initial.reviewable,true);assert.equal(initial.validation.status,1);
+assert.equal(initial.ready,true);assert.equal(initial.reviewable,true);assert.equal(initial.validation.status,0);assert.equal(initial.validation.phase,'quick');
+const fullRun=run('bash',[join(scripts,'run-full-validation.sh')],1);
+assert.match(fullRun,/STATUS=1/);assert.match(fullRun,/RECEIPT=.*receipt\.env/);
 assert.equal(git('status','--porcelain').trim(),'');
-prepare('final');assert.equal(evidence().ready,false);
+prepare('final');assert.equal(evidence().ready,false);assert.equal(evidence().validation.phase,'full');
 // The actual worker admission path admits diagnosis but never a failed final.
 if(engine==='codex'){
  const {runLane}=await import(pathToFileURL(join(scripts,'run-lane.mjs')));
@@ -52,12 +54,12 @@ const moved = spawnSync('node',[join(scripts,'prepare-review.mjs'),'final'],{cwd
 assert.equal(moved.status,1);assert.match(moved.stderr,/HEAD moved/);
 for (const code of [75,78,127,143]) {
   save('.'+engine+'/quality-workflow/validation.commands','exit '+code+'\n');commit();
-  run('bash',[join(scripts,'freeze.sh')]);prepare();
+  run('bash',[join(scripts,'freeze.sh')]);prepare('final');
   assert.equal(evidence().reviewable,false,'Infrastructure/cancellation is not gate evidence');
 }
 // Unsafe evidence cannot be used just because validation failure is reviewable.
 save('.'+engine+'/quality-workflow/validation.commands','echo changed > source.txt\nfalse\n');commit();
-run('bash',[join(scripts,'freeze.sh')]);prepare();
+run('bash',[join(scripts,'freeze.sh')]);prepare('final');
 assert.equal(evidence().reviewable,false);save('source.txt','feature\n');
 // Build recovery is shared across adapters, once per source, and source preserving.
 mkdirSync(join(repo,'generated'),{recursive:true});

@@ -1,5 +1,22 @@
 # Validation report
 
+## Balanced workflow update — 16 September 2026
+
+Both adapter suites now exercise the version-three state machine in isolated Git
+fixtures. The default path starts one broad review after quick safety preparation
+while the configured full gate runs concurrently. It batches up to five coherent
+findings, uses parent-owned targeted verification, requires an independent exact-
+diff review for each provisional checkpoint, and runs the full configured gate
+again only at final acceptance (or an explicitly cross-cutting checkpoint).
+
+The fixtures also cover separate implementation and verification status, deferred
+browser checks, readable Markdown reports, legacy run migration, rejected-repair
+persistence, failed-check diagnosis receipts, source/index preservation, occupied-
+port routing, moved HEAD detection, and final-only acceptance. Codex tests confirm
+the broad reviewer defaults to medium effort while specialist/repair/final roles
+remain high effort. This validates orchestration and invariants, not model accuracy
+or measured parity with GitHub Copilot Code Review.
+
 ## Post-repair diagnosis update — 16 September 2026
 
 Both package self-test suites passed. Independent read-only forward-testing of
@@ -32,7 +49,8 @@ Verified behaviors:
 - Shell and Node scripts passed syntax checks; ShellCheck reported no findings.
 - The example review report passes the dependency-free structured finding validator.
 - Initial preparation used the frozen merge base and implementation commit,
-  captured configured validation and analyzer evidence, and left Git clean.
+  captured quick validation and analyzer evidence, started full validation as a
+  separate source-bound run, and left Git clean.
 - A failing required analyzer produced `READY=0` and a non-zero exit.
 - A repair snapshot included tracked changes and a new untracked file.
 - Accepting and preparing that repair did not change the user's real Git index.

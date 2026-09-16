@@ -19,13 +19,15 @@ not pollute the project or travel to another clone. Re-run freeze in each clone.
 `/quality-workflow` runs freeze itself. The separate `/freeze-review` command is
 only needed when operating individual stages manually.
 
-## Preparation reports `READY=0`
+## Preparation and full validation disagree
 
-Open the evidence directory printed by `/prepare-review`. `validation.log` contains
-the full deterministic gate, `analyzers/` contains static-analysis output, and
-`manifest.json` identifies the exact base/head plus warnings. A failed validation,
-failed required analyzer blocks approval. `REVIEWABLE=1` still permits initial
-diagnosis; unsafe or stale source blocks review. Follow the bundled
+Initial `/prepare-review` runs the quick safety phase so review can start without
+waiting for the whole suite. Its `validation.log` covers that phase. The workflow
+starts full validation concurrently and retains its separate receipt/log under
+Git-local state. `analyzers/` contains static-analysis output, and `manifest.json`
+identifies the exact base/head plus warnings. A failed full validation or required
+analyzer blocks repair/approval, not the concurrent read-only review. Unsafe or
+stale source blocks review. Follow the bundled
 `gate-failure.md` for one inspected build recovery and routing to triage/repair.
 
 A warning that validation is `generic-auto-detected` means the repository has not
@@ -100,8 +102,9 @@ Git object database and may eventually be pruned by normal Git maintenance.
 Put fast, authoritative commands in `validation.commands`; move very slow end-to-end
 or external-environment checks to CI and document them in `CLAUDE.md`. Temporarily
 set `QUALITY_SKIP_STOP_VERIFY=1` only when an intentional intermediate stop is
-more important than enforcing the gate. Always run `/validate-change full` before
-freeze and final review.
+more important than enforcing the gate. Full validation remains required for final
+acceptance; the orchestrator runs it through final preparation. Do not duplicate
+it immediately before that stage.
 
 ## Validation is already running
 

@@ -6,11 +6,12 @@ A globally installable, evidence-driven pipeline for high-confidence code change
 The central invariant is simple:
 
 > Reviewers define evidence-backed problems and cannot edit. A separate repair
-> agent changes code, one confirmed finding class at a time.
+> agent implements only a scoped batch of confirmed related findings.
 
-Version 2 adds the missing orchestration layer: repository-wide context,
-deterministic validation and analyzer evidence, immutable review snapshots, and
-automatic handoff between independent agents.
+Version 3 reduces repeated orchestration: one reviewer by default, parent triage,
+coherent repair batches, parent-owned checks and readable reports. Provisional
+checkpoints permit progress; full gates and final review still control acceptance.
+Copilot parity has not been measured or established.
 
 ## Install globally
 
@@ -140,16 +141,19 @@ That command automatically:
 
 1. detects and freezes the destination base branch;
 2. runs `/prepare-review` to assemble the diff, expanded context, repository tree,
-   instructions, tests, callers/consumers, PR metadata, full validation, and
-   analyzer output;
+   instructions, tests, callers/consumers, PR metadata, quick validation, and
+   analyzer output, while the parent starts the full configured gate alongside review;
 3. sends that evidence to a fresh read-only reviewer;
-4. sends the complete structured report to a separate read-only triager;
-5. sends each confirmed blocking/should-fix defect to a fresh repair agent, one
-   at a time;
-6. validates and independently reviews only that repair's hidden snapshot before
-   accepting it;
-7. prepares the complete accepted state and runs one fresh final review when
-   repairs occurred.
+4. triages in the parent, using another reviewer only when needed;
+5. groups 1–5 related confirmed findings into each scoped repair batch;
+6. runs affected checks in the parent and independently reviews the batch before
+   a provisional checkpoint;
+7. runs full gates and one fresh final review before final acceptance.
+
+Worker browser restrictions hand verification to the parent, not back to you.
+JSON stays internal. You see readable findings and implemented/verified/reviewed/
+accepted counts. Legacy runs import their existing triage and resume their pending
+repair without reinitialization or repeating completed reviews.
 
 If a reviewer reaches its tool-turn limit, the orchestrator automatically continues
 the lane. It resumes the same context when that runtime feature exists; otherwise
@@ -179,9 +183,9 @@ review no longer requires hand-feeding context.
 
 ## Review depth
 
-`/quality-workflow` always uses the senior reviewer and automatically routes the
-prepared evidence to relevant independent specialists. A high-risk or explicitly
-exhaustive review uses all three:
+`/quality-workflow` defaults to one senior reviewer across all nine passes. Add
+specialists for a concrete high-risk domain or explicitly exhaustive request,
+not just because the diff touches both code and tests:
 
 - `contract-reviewer`: claimed behavior, consumers, compatibility, release contract
 - `behavior-reviewer`: input domains, unmasked behavior, generated output
@@ -191,6 +195,10 @@ The orchestrator unions their findings, deduplicates only identical defects, and
 triages the union without asking you to relay anything. Parallel review raises
 recall but also raises false-positive volume, so every finding must still pass the
 evidence gate.
+
+The broad reviewer and orchestrator use medium effort as the balanced default.
+Targeted repair, specialist review, exact-diff review and final review retain high
+effort. The installed package inherits the configured model and does not pin one.
 
 ## Finding handoff
 

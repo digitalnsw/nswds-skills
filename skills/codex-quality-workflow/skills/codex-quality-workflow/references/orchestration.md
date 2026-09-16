@@ -100,8 +100,10 @@ Review-only mode stops with consolidated findings and coverage. Full mode contin
    leave its diff available for inspection. Do not automatically retry writes.
 5. If gate definitions changed, refresh init using the protocol without weakening
    checks. Run full verify in the parent. A concrete dependency-resolution failure
-   goes through dependency-preflight.md once; missing build outputs follow
-   gate-failure.md's bounded recovery. A failed repair still stops acceptance;
+   goes through dependency-preflight.md once; missing build outputs and occupied
+   test ports follow gate-failure.md's bounded recovery before classifying a
+   repair as failed. Port recovery reruns validation, not the repair worker.
+   A genuinely failed repair still stops acceptance;
    do not start a fix-the-fix loop. On success create candidate R-xxx using
    repair-state.mjs. Run `repair-review` with target=repair-diff and the candidate's
    base/head pair; inspect TWO-endpoint diff, never triple-dot. Pass the original

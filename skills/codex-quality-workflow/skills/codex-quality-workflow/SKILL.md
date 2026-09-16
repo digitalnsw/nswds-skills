@@ -19,7 +19,8 @@ Modes from the user's request:
 - Freeze: run `scripts/freeze.sh` with the optional destination branch only.
 - Init: read `references/init-protocol.md` and initialize repository validation
   with ENGINE=codex, then stop. With `init refresh`, refresh the generated plan.
-- Validate: initialize and perform dependency preflight, then run `scripts/verify.sh full`.
+- Validate: initialize and perform dependency preflight, then run `scripts/verify.sh full`;
+  apply `references/gate-failure.md` for safe environment recovery, never source repair.
 
 Full, review-only, prepare and validate modes automatically initialize before
 validation. Read `references/init-protocol.md` completely for that stage. Setup
@@ -43,11 +44,13 @@ that workers use the CLI-configured model, which may differ from the desktop
 selection. Do not silently select a different model to recover an error.
 
 For failed validation, read `references/gate-failure.md`: diagnose, attempt one
-safe build-output recovery if applicable, then continue initial read-only review
+safe build-output recovery if applicable, or automatically retry an occupied
+local test port through the repository's supported free-port mechanism. Never
+stop or reuse another project's server. Then continue initial read-only review
 when evidence is reviewable. In full mode confirmed gate defects enter normal
 triage and targeted repair. Failed gates block approval, not investigation.
 
 Report evidence and outcomes plainly. Routine partial review recovery is automatic.
 Incomplete lanes block triage and a passed result. Stop for product decisions,
-unsafe evidence, unresolved external prerequisites, rejected repairs, unavailable
+unsafe evidence, external prerequisites unresolved after safe recovery, rejected repairs, unavailable
 CLI/authentication, or retry exhaustion.

@@ -92,7 +92,10 @@ commit SHA and never silently choose a tag. Run this state machine exactly:
       stop that repair and report the conflict; do not improvise a fix.
    c. Run `verify.sh full`. For a concrete dependency-resolution failure follow
       dependency-preflight.md's bounded recovery, then rerun. Missing generated
-      outputs follow gate-failure.md. A failed repair still stops acceptance.
+      outputs and occupied local test ports follow gate-failure.md. Automatically
+      use a supported free test port before classifying a repair as failed; never
+      stop or reuse another project's server. Rerun validation, not the repair.
+      A genuinely failed repair still stops acceptance.
       Never weaken a gate or perform repeated installation attempts.
    d. Run `repair-state.mjs candidate <finding-id>` and capture
       `BASE_SNAPSHOT` and `CANDIDATE_SNAPSHOT`.
@@ -124,5 +127,5 @@ validation.configuration.exclusions in the final report; CI-only is not passed.
 Pass outputs directly between agents through your context. Never ask the user to
 copy findings from one command into another or to approve a routine continuation.
 Interrupt only for an actual product decision, unsafe/failing repair, stale state,
-unresolved external prerequisites, or exhaustion of the bounded automatic continuation
+external prerequisites unresolved after safe recovery, or exhaustion of the bounded automatic continuation
 allowance. Unavailable same-agent resume is not a reason to interrupt.

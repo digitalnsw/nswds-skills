@@ -10,7 +10,42 @@ nonzero on failure; inspect its manifest instead of stopping on that exit alone.
 Missing/stale/unsafe evidence, busy validation, or launch/prerequisite errors must
 be resolved before using it. Final review still requires `ready=true`.
 
-## One preparation recovery
+## Occupied local test port (also during repair validation)
+
+An occupied test port is not a failed code repair or an unresolved external
+prerequisite until safe port selection has been tried. Do not ask to stop another
+project's server as the first response. Never kill an unknown listener, attach
+tests to it, or enable `reuseExistingServer` to bypass the collision.
+
+Inspect the repository's test launcher and configuration. Prefer its automatic
+free-port launcher. Otherwise use an existing supported port override, checking
+that the server bind, readiness URL and test base URL all use the same loopback
+host/port. Preserve the suite, assertions, build mode and no-reuse policy. Do not
+guess an environment variable: verify the configuration consumes it. Select an
+available unprivileged port (or OS-assigned port) by binding it, not merely by
+assuming 3001 is free. Do not change production/service URLs or security policy.
+
+Continue automatically without conversational approval for an in-scope test
+port change; obtain host permissions for sockets/browser execution when needed.
+Preserve the failed log and pending repair, then rerun full validation without
+`--reuse` under the supported override. Re-running validation after environment
+recovery is not another source-repair attempt. Record the actual command/port.
+An automatic launcher owns its retry budget; do not wrap an exhausted launcher
+in another retry loop. Otherwise allow at most two alternate-port retries for
+that validation run, and retry only a confirmed startup collision before tests
+began. Assertion failures, permission errors and cancellation are not collisions.
+
+If no supported override exists, record a separate, evidence-backed
+gate-configuration finding. Full mode may repair it only from an accepted clean
+snapshot under the existing repair protocol. If another repair is pending,
+preserve it and report that source configuration needs separate authorization;
+do not launch another repair on unaccepted changes, reset, or silently accept it.
+Review-only/prepare/validate modes also need explicit authorization for source
+changes. A fixed-origin contract (for example OAuth allowlists), exhausted port
+allocation, or an unavailable socket permission is a real blocker: report the
+specific constraint, not a request to terminate an unrelated server.
+
+## One build preparation recovery
 
 For a concrete dependency-resolution error use dependency-preflight.md.
 For a missing ignored workspace build output, inspect its producer and task/cache

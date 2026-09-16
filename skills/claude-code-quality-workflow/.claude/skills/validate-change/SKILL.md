@@ -11,4 +11,8 @@ write only Git-local metadata during init. For full/default also read
 `${CLAUDE_SKILL_DIR}/../../quality-workflow/dependency-preflight.md` and perform its
 bounded environment preparation. Then run
 `${CLAUDE_SKILL_DIR}/../../quality-workflow/scripts/verify.sh ${ARGUMENTS:-full}`.
-Report every command and result. Do not modify code or weaken a failing gate.
+For setup failures, read `../../quality-workflow/gate-failure.md` relative to this
+skill. Automatically use the repository's supported free-port mechanism for
+occupied test ports and rerun without cached validation results; never stop or
+reuse another project's server. Report every command and result. Do not modify
+code or weaken a failing gate.

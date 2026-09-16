@@ -56,7 +56,8 @@ Do not re-review the whole repository before each fix.
    gate. Do not run the full suite for every small finding.
 5. Give a fresh read-only repair reviewer ALL batch findings, exact two-endpoint
    diff and parent verification receipt/logs. It must verify every required
-   outcome, coverage adequacy and absence of regressions. Zero findings and
+   outcome, copy the exact batch into `review.assigned_finding_ids`, verify
+   coverage adequacy and absence of regressions. Zero findings and
    COMPLETE coverage are required. Run
    `repair-state.mjs checkpoint R-001,R-002 /absolute/repair-review.json`.
    This helper refuses missing/failed/stale verification and mismatched or

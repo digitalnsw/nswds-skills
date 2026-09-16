@@ -24,7 +24,8 @@ whether the repair:
 
 Do not expand into a whole-branch audit. Return the shared schema with
 `target=repair-diff` and
-all batch outcomes checked. Inspect parent validation receipts/logs for the exact
+`review.assigned_finding_ids` exactly matching every supplied batch ID, with all
+batch outcomes checked. Inspect parent validation receipts/logs for the exact
 candidate, including adequacy of targeted coverage. Deferred worker checks are
 not a defect when parent evidence resolves them. Keep JSON internal to the parent.
 The repair is clean only when `completion.status=COMPLETE`

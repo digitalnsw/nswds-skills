@@ -1,12 +1,29 @@
 #!/usr/bin/env node
 // Parent-only, inspected local build recovery. Never infer commands from errors.
-import {existsSync, mkdirSync, readFileSync, writeFileSync, openSync, closeSync, unlinkSync, rmdirSync} from 'node:fs';
-import {resolve, join} from 'node:path';
+import {existsSync, mkdirSync, readFileSync, writeFileSync, openSync, closeSync, unlinkSync, rmdirSync, lstatSync, realpathSync} from 'node:fs';
+import {resolve, join, relative, isAbsolute, sep} from 'node:path';
 import {execFileSync, spawnSync, spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {sourceFingerprint} from './dependency-preflight.mjs';
 
 const git = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], {encoding:'utf8'}).trim();
+function safeOutput(repo, path) {
+  const root = realpathSync(repo), full = resolve(root, path), rel = relative(root, full);
+  if (rel === '' || rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error('Output escapes repository: ' + path);
+  let current = root;
+  for (const part of rel.split(sep)) {
+    current = join(current, part);
+    try {
+      if (lstatSync(current).isSymbolicLink()) throw new Error('Recovery output traverses a symbolic link: ' + path);
+      const actual = realpathSync(current), actualRel = relative(root, actual);
+      if (actualRel === '..' || actualRel.startsWith('..' + sep) || isAbsolute(actualRel)) throw new Error('Recovery output resolves outside repository: ' + path);
+    } catch (error) {
+      if (error.code === 'ENOENT') break;
+      throw error;
+    }
+  }
+  return full;
+}
 async function runProducer(repo, command, fd, timeoutMs) {
   return new Promise(resolveResult => {
     const child = spawn(command[0], command.slice(1), {cwd:repo,stdio:['ignore',fd,fd],detached:true});
@@ -34,8 +51,7 @@ export async function recoverBuild(repo, plan, {timeoutMs=600000}={}) {
     throw new Error('Plan requires inspected command argv, exact ignored outputs, and an evidence-backed reason');
   const outputs = plan.outputs.map(path => {
     if (typeof path !== 'string') throw new Error('Invalid output');
-    const full = resolve(repo, path);
-    if (!full.startsWith(repo + '/')) throw new Error('Output escapes repository');
+    const full = safeOutput(repo, path);
     const ignored = spawnSync('git', ['check-ignore', '-q', '--', path], {cwd:repo});
     if (ignored.status !== 0) throw new Error('Recovery outputs must be ignored, untracked build artifacts: ' + path);
     return full;
@@ -68,8 +84,9 @@ export async function recoverBuild(repo, plan, {timeoutMs=600000}={}) {
     } finally { closeSync(fd); }
     const sourceUnchanged = sourceFingerprint(repo) === before;
     const missing = outputs.filter(path => !existsSync(path));
-    const status = !sourceUnchanged ? 'SOURCE_CHANGED' : result.interrupted || result.status !== 0 || missing.length ? 'RECOVERY_FAILED' : 'RECOVERED';
-    const report = {status,code:status === 'RECOVERED' ? 0 : 78,sourceUnchanged,missing,exitCode:result.status,error:result.error?.message,before,plan,log};
+    const unsafe = plan.outputs.filter(path => {try {safeOutput(repo,path); return false;} catch {return true;}});
+    const status = !sourceUnchanged ? 'SOURCE_CHANGED' : result.interrupted || result.status !== 0 || missing.length || unsafe.length ? 'RECOVERY_FAILED' : 'RECOVERED';
+    const report = {status,code:status === 'RECOVERED' ? 0 : 78,sourceUnchanged,missing,unsafe,exitCode:result.status,error:result.error?.message,before,plan,log};
     writeFileSync(record, JSON.stringify(report,null,2) + '\n');
     return {...report,record};
   } finally {

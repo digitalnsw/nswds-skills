@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import {readFileSync, writeFileSync, mkdirSync, mkdtempSync, realpathSync, unlinkSync, rmdirSync} from 'node:fs';
+import {readFileSync, writeFileSync, mkdirSync, mkdtempSync, realpathSync, unlinkSync, rmdirSync, symlinkSync, existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {resolve,join,dirname} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
@@ -20,7 +20,7 @@ const commit=()=>{git('add','.');git('commit','-m','fixture');};
 const scripts=join(skill,'scripts');
 const prepare=(target='initial',expected=target==='initial'?0:1)=>run('node',[join(scripts,'prepare-review.mjs'),target],expected);
 git('init','-b','main');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
-save('source.txt','base\n');save('.gitignore','generated/\n');commit();
+save('source.txt','base\n');save('.gitignore','generated/\ngenerated-link/\n');commit();
 git('switch','-c','feature');
 save('source.txt','feature\n');
 save('.'+engine+'/quality-workflow/validation.commands','false\n');
@@ -64,6 +64,15 @@ assert.equal(evidence().reviewable,false);save('source.txt','feature\n');
 // Build recovery is shared across adapters, once per source, and source preserving.
 mkdirSync(join(repo,'generated'),{recursive:true});
 const plan={reason:'Fixture missing generated output',outputs:['generated/theme.css'],command:[process.execPath,'-e','require("fs").writeFileSync("generated/theme.css","theme")']};
+const outside=repo+'-outside';mkdirSync(outside);
+symlinkSync(join(outside,'escaped.css'),join(repo,'generated/escaped.css'));
+await assert.rejects(recoverBuild(repo,{...plan,outputs:['generated/escaped.css']}),/symbolic link/);
+assert.equal(existsSync(join(outside,'escaped.css')),false);
+unlinkSync(join(repo,'generated/escaped.css'));
+symlinkSync(outside,join(repo,'generated-link'));
+await assert.rejects(recoverBuild(repo,{...plan,outputs:['generated-link/theme.css']}),/symbolic link/);
+assert.equal(existsSync(join(outside,'theme.css')),false);
+unlinkSync(join(repo,'generated-link'));
 mkdirSync(join(repo,'.git/claude-quality-workflow/validation.lock'),{recursive:true});
 assert.equal((await recoverBuild(repo,plan)).status,'BUSY');
 rmdirSync(join(repo,'.git/claude-quality-workflow/validation.lock'));

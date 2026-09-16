@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import {readFileSync, existsSync, lstatSync, realpathSync, statSync, mkdirSync, writeFileSync, unlinkSync, rmdirSync} from 'node:fs';
-import {resolve, join} from 'node:path';
+import {resolve, join, relative, isAbsolute, dirname, sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync, execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
@@ -11,6 +11,21 @@ const git = (repo, ...args) => execFileSync('git', ['-C',repo,...args], {encodin
 const gitPath = (repo, name) => resolve(repo, git(repo,'rev-parse','--git-path',name));
 const dependencyFields = ['dependencies','devDependencies','optionalDependencies'];
 const same = (a,b) => JSON.stringify(Object.entries(a || {}).sort()) === JSON.stringify(Object.entries(b || {}).sort());
+const lstatExists = path => {try {lstatSync(path); return true;} catch {return false;}};
+const contained = (root, path) => {
+  const rel = relative(root, path);
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel));
+};
+function existingPathContained(repo, path) {
+  const root = realpathSync(repo);
+  let current = path;
+  while (!lstatExists(current)) {
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+  try {return contained(root, realpathSync(current));} catch {return false;}
+}
 
 export function inspectDependencies(repo) {
   const manifestPath = join(repo,'package.json');
@@ -48,12 +63,14 @@ export function inspectDependencies(repo) {
     if (!valid) issues.push(`Missing or incorrect workspace link: ${path}`);
   }
   const installedLockPath = join(repo,'node_modules/.package-lock.json');
-  const installed = existsSync(installedLockPath) ? readJSON(installedLockPath) : null;
+  const installedSafe = existingPathContained(repo, installedLockPath);
+  if (!installedSafe) blockers.push('Installed dependency tree resolves outside repository');
+  const installed = installedSafe && existsSync(installedLockPath) ? readJSON(installedLockPath) : null;
   if (!installed) issues.push('Installed dependency inventory is missing');
   for (const [path,entry] of Object.entries(lock.packages)) {
     if (!path.includes('node_modules/') || entry.link || entry.optional || entry.devOptional) continue;
     const full=resolve(repo,path);
-    if (!full.startsWith(repo+'/')) {blockers.push(`Locked path escapes repository: ${path}`); continue;}
+    if (!contained(resolve(repo),full) || !existingPathContained(repo,full)) {blockers.push(`Locked path escapes repository: ${path}`); continue;}
     const packagePath=join(full,'package.json');
     if (!existsSync(packagePath)) issues.push(`Required locked package is missing: ${path}`);
     else if (entry.version && readJSON(packagePath).version !== entry.version) issues.push(`Installed version differs from lockfile: ${path}`);
@@ -63,7 +80,7 @@ export function inspectDependencies(repo) {
   for (const [path,entry] of Object.entries(installed?.packages || {})) {
     if (!path.includes('node_modules/')) continue;
     const full = resolve(repo,path);
-    if (!full.startsWith(repo+'/')) {blockers.push(`Installed path escapes repository: ${path}`); continue;}
+    if (!contained(resolve(repo),full) || !existingPathContained(repo,full)) {blockers.push(`Installed path escapes repository: ${path}`); continue;}
     if (!existsSync(full)) issues.push(`Installed package is missing: ${path}`);
     const expected = lock.packages[path];
     if (!expected || expected.version !== entry.version || expected.resolved !== entry.resolved) issues.push(`Installed inventory differs from lockfile: ${path}`);

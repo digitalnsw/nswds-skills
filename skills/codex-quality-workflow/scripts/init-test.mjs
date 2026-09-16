@@ -20,7 +20,7 @@ function run(bin, args, cwd = repo, expected = 0) {
 }
 const git = (...args) => run('git', args);
 git('init', '-b', 'main'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.invalid');
-save('package.json', JSON.stringify({private:true, workspaces:['packages/*'], scripts:{'check:unit':'node --test packages/unit/case.test.mjs', deploy:'exit 99'}}));
+save('package.json', JSON.stringify({private:true, scripts:{'check:unit':'node --test packages/unit/case.test.mjs', deploy:'exit 99'}}));
 save('packages/unit/package.json', JSON.stringify({scripts:{test:'node --test case.test.mjs'}}));
 save('packages/unit/case.test.mjs', "import {test} from 'node:test'; test('fixture', () => {});\n");
 save('.github/workflows/ci.yml', 'name: CI\njobs:\n  test:\n    steps:\n      - run: npm run check:unit\n');

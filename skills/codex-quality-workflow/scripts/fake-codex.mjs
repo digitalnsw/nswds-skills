@@ -19,6 +19,8 @@ let report = {
   findings: job.role === 'triage' ? inputs[0].findings.map(f => ({...f, status:'CONFIRMED'})) : [],
   coverage: {passes_completed: job.passes, commands_run: [], not_run: [], clean_areas: ['fixture']}
 };
+if (job.role === 'repair-review') report.review.assigned_finding_ids = inputs.map(f => f.id);
+if (job.scope === 'wrong-repair-scope') report.review.assigned_finding_ids = [];
 if (job.scope === 'narration-first' && attempt === 1) {
   writeFileSync(output, 'Reading the core source next...'); process.exit(0);
 }

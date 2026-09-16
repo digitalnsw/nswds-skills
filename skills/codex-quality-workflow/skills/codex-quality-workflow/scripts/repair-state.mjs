@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, rmdirSync, writeFileSync, openSync, closeSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, rmdirSync, writeFileSync, openSync, closeSync, unlinkSync, renameSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 const [action, arg, reviewPath] = process.argv.slice(2);
 const here = dirname(fileURLToPath(import.meta.url));
 const run = (args, options = {}) => {
@@ -45,9 +46,13 @@ function validatedReport(path) {
  if(report.completion.status!=='COMPLETE') throw new Error('review is incomplete');
  return report;
 }
-function cleanReview(path,base,targetHead,target,all=false) {
+function cleanReview(path,base,targetHead,target,all=false,expectedFindingIds=[]) {
  const r=validatedReport(path);
  if(r.review.base_sha!==base||r.review.head_sha!==targetHead||r.review.target!==target) throw new Error('review targets a different snapshot');
+ if(target==='repair-diff') {
+  const expected=[...expectedFindingIds].sort(),actual=[...(r.review.assigned_finding_ids||[])].sort();
+  if(JSON.stringify(actual)!==JSON.stringify(expected)) throw new Error('repair review finding IDs do not match the candidate batch');
+ }
  if(r.findings.length) {const error=new Error('independent review has unresolved findings');error.rejected=true;throw error;}
  if(all&&[1,2,3,4,5,6,7,8,9].some(p=>!r.coverage.passes_completed.includes(p))) throw new Error('final review is missing passes');
 }
@@ -77,10 +82,44 @@ async function execute(argv,log,seconds) {
   child.once('close',code=>{cleanup();done({code,timeout,cancelled});});
  });
 }
+const repairLockPath=join(stateDir,'repair-state.lock');
+const processStamp=pid=>{const r=spawnSync('ps',['-o','lstart=','-p',String(pid)],{encoding:'utf8'});return r.status===0?r.stdout.trim():'';};
+function liveOwner(owner) {
+ if(!owner||!Number.isInteger(owner.pid)||owner.pid<1)return false;
+ try{process.kill(owner.pid,0);}catch(error){return error.code==='EPERM';}
+ const stamp=processStamp(owner.pid);
+ return !owner.processStarted||!stamp||owner.processStarted===stamp;
+}
+function lockOwner() {
+ try {
+  if(!lstatSync(repairLockPath).isDirectory())return null;
+  return read(join(repairLockPath,'owner.json'));
+ } catch{return null;}
+}
+function acquireRepairLock() {
+ const owner={pid:process.pid,startedAt:new Date().toISOString(),processStarted:processStamp(process.pid),token:randomUUID()};
+ for(let attempt=0;attempt<4;attempt++) {
+  const pending=repairLockPath+'.pending-'+owner.token;
+  mkdirSync(pending);save(join(pending,'owner.json'),owner);
+  try{renameSync(pending,repairLockPath);return owner;}
+  catch(error){rmSync(pending,{recursive:true,force:true});if(!['EEXIST','ENOTEMPTY','EISDIR','ENOTDIR'].includes(error.code))throw error;}
+  if(!existsSync(repairLockPath))continue;
+  const current=lockOwner();
+  if(liveOwner(current))throw new Error('repair state is busy in PID '+current.pid);
+  const stat=lstatSync(repairLockPath),identity=(current?.token||('legacy-'+stat.ino+'-'+Math.trunc(stat.mtimeMs))).replace(/[^a-zA-Z0-9-]/g,'');
+  try{renameSync(repairLockPath,repairLockPath+'.stale-'+identity);}
+  catch{throw new Error('repair state lock changed during stale recovery; retry');}
+ }
+ throw new Error('could not acquire repair state lock');
+}
+function releaseRepairLock(owner) {
+ const current=lockOwner();
+ if(current?.token===owner?.token)rmSync(repairLockPath,{recursive:true,force:true});
+}
 let lock;
 const validationLocks=[];
 try {
- lock=openSync(join(stateDir,'repair-state.lock'),'wx');
+ lock=acquireRepairLock();
  if(action==='init') {
   if(existsSync(stateFile)) throw new Error('state already exists; resume it, do not erase progress');
   if(run(['status','--porcelain=v1','--untracked-files=all'])) throw new Error('repair pipeline must start clean');
@@ -153,7 +192,7 @@ try {
   if(arg!==c.findingIds.join(',')) throw new Error('candidate finding IDs do not match');
   if(c.rejectedReview) throw new Error('candidate was rejected by independent review; preserve the diff and resolve the recorded finding');
   const v=readyVerification(c);
-  try{cleanReview(reviewPath,c.baseCommit,c.candidateCommit,'repair-diff');}
+  try{cleanReview(reviewPath,c.baseCommit,c.candidateCommit,'repair-diff',false,c.findingIds);}
   catch(error){if(error.rejected){c.rejectedReview=resolve(reviewPath);save(candidateFile,c);}throw error;}
   s.checkpointCommit=c.candidateCommit;
   s.checkpointedFindings=[...new Set([...(s.checkpointedFindings??s.acceptedFindings??[]),...c.findingIds])];
@@ -189,5 +228,5 @@ try {
 } catch(error){console.error('repair-state: '+error.message);process.exitCode=1;}
 finally{
  for(const path of validationLocks.reverse()){if(existsSync(join(path,'owner')))unlinkSync(join(path,'owner'));rmdirSync(path);}
- if(lock!==undefined){closeSync(lock);unlinkSync(join(stateDir,'repair-state.lock'));}
+ if(lock!==undefined)releaseRepairLock(lock);
 }

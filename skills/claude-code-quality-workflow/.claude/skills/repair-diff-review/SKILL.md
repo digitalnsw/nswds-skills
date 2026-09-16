@@ -11,5 +11,6 @@ background: false
 Review only the current repair diff for this coherent finding batch: `$ARGUMENTS`.
 
 Return the shared structured review schema. Clean means `COMPLETE` with an empty
-findings array; partial output is not clean. Never edit, expand into a whole-branch
-audit, or repair what you find.
+findings array and `review.assigned_finding_ids` exactly matching the supplied
+batch; partial output is not clean. Never edit, expand into a whole-branch audit,
+or repair what you find.

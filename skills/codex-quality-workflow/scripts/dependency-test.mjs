@@ -11,6 +11,22 @@ const repo=join(temp,'repo with spaces');mkdirSync(repo);
 const save=(path,data)=>{mkdirSync(dirname(path),{recursive:true});writeFileSync(path,typeof data==='string'?data:JSON.stringify(data));};
 const git=(...args)=>execFileSync('git',['-C',repo,...args],{encoding:'utf8'}).trim();
 git('init','-b','main');git('config','user.name','Test');git('config','user.email','test@example.invalid');
+for (const nested of [false,true]) {
+ const fixture=join(temp,nested?'nested-symlink':'root-symlink'),outside=join(temp,nested?'nested-outside':'root-outside');
+ mkdirSync(fixture);mkdirSync(outside);
+ save(join(fixture,'package.json'),{dependencies:{dep:'1.0.0'}});
+ save(join(fixture,'package-lock.json'),{lockfileVersion:3,packages:{'':{dependencies:{dep:'1.0.0'}},'node_modules/dep':{version:'1.0.0'}}});
+ save(join(outside,'dep/package.json'),{version:'1.0.0'});
+ if(nested) {
+  mkdirSync(join(fixture,'node_modules'));
+  save(join(fixture,'node_modules/.package-lock.json'),{packages:{'node_modules/dep':{version:'1.0.0'}}});
+  symlinkSync(join(outside,'dep'),join(fixture,'node_modules/dep'));
+ } else {
+  save(join(outside,'.package-lock.json'),{packages:{'node_modules/dep':{version:'1.0.0'}}});
+  symlinkSync(outside,join(fixture,'node_modules'));
+ }
+ assert.equal(inspectDependencies(fixture).status,'BLOCKED_LOCKFILE');
+}
 save(join(repo,'.gitignore'),'node_modules/\n');
 save(join(repo,'.claude/quality-workflow/validation.commands'),'node -e "console.log(1234567)"\n');
 save(join(repo,'package.json'),{name:'test',workspaces:['packages/*'],dependencies:{dep:'1.0.0'}});
@@ -36,6 +52,11 @@ assert.equal(inspectDependencies(repo).status,'READY');
 const verify=(...args)=>spawnSync('bash',[join(scripts,'verify.sh'),'full',...args],{cwd:repo,encoding:'utf8'});
 assert.equal(verify().status,0);
 assert.match(verify('--reuse').stdout,/already passed/);
+unlinkSync(join(repo,'package-lock.json'));
+const unlocked=verify();
+assert.equal(unlocked.status,78,'dependency-bearing projects without a supported lockfile must stop');
+assert.ok(!unlocked.stdout.includes('1234567'),'no validation command ran before manual dependency preparation');
+save(join(repo,'package-lock.json'),lock);
 unlinkSync(join(repo,'node_modules/@test/lib'));
 const staleCache=verify('--reuse');
 assert.equal(staleCache.status,78,'preflight must block before cached validation reuse');

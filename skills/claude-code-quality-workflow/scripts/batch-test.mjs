@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,realpathSync,existsSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,mkdtempSync,realpathSync,existsSync,rmSync,renameSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {resolve,join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {spawnSync} from 'node:child_process';
+import {spawnSync,spawn} from 'node:child_process';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const engine=root.endsWith('claude-code-quality-workflow')?'claude':'codex';
 const skill=engine==='claude'?join(root,'.claude/quality-workflow'):join(root,'skills/codex-quality-workflow');
@@ -50,7 +50,7 @@ save(plan,{scope:'targeted',reason:'Check the current source outcome',commands:[
 const review=join(state,'review.json');
 function cleanReview(){
  const c=read('repair-candidate.json');
- save(review,{...fixture,review:{base_sha:c.baseCommit,head_sha:c.candidateCommit,reviewer:'independent fixture',target:'repair-diff'},findings:[]});
+ save(review,{...fixture,review:{base_sha:c.baseCommit,head_sha:c.candidateCommit,reviewer:'independent fixture',target:'repair-diff',assigned_finding_ids:c.findingIds},findings:[]});
 }
 save(join(repo,'source.txt'),'repair first batch');
 call('candidate','R-001,R-002');cleanReview();
@@ -58,6 +58,8 @@ assert.match(fail('checkpoint','R-001,R-002',review),/verification is missing/);
 call('verify',plan);
 const bad=JSON.parse(readFileSync(review));bad.review.head_sha='a'.repeat(40);save(join(state,'bad-review.json'),bad);
 assert.match(fail('checkpoint','R-001,R-002',join(state,'bad-review.json')),/different snapshot/);
+const wrongScope=JSON.parse(readFileSync(review));wrongScope.review.assigned_finding_ids=['R-001'];save(join(state,'wrong-scope-review.json'),wrongScope);
+assert.match(fail('checkpoint','R-001,R-002',join(state,'wrong-scope-review.json')),/do not match/);
 call('checkpoint','R-001,R-002',review);
 assert.equal(read('repair-state.json').acceptedFindings.length,0);
 assert.equal(read('repair-state.json').checkpointedFindings.length,2);
@@ -105,6 +107,25 @@ const rejected=JSON.parse(readFileSync(review));rejected.findings=[fixture.findi
 save(join(state,'rejected.json'),rejected);
 assert.match(fail('checkpoint','R-004',join(state,'rejected.json')),/unresolved findings/);
 assert.match(fail('checkpoint','R-004',review),/candidate was rejected/);
+const repairLock=join(state,'repair-state.lock');
+mkdirSync(repairLock);save(join(repairLock,'owner.json'),{pid:process.pid,startedAt:new Date().toISOString(),token:'live-owner'});
+assert.match(fail('status'),/repair state is busy/);
+rmSync(repairLock,{recursive:true,force:true});
+mkdirSync(repairLock);save(join(repairLock,'owner.json'),{pid:2147483647,startedAt:'2000-01-01T00:00:00.000Z',token:'dead-owner'});
+call('status');
+assert(existsSync(repairLock+'.stale-dead-owner'),'stale lock is retained as a recovery tombstone');
+assert(!existsSync(repairLock),'the recovered operation releases only its own lock');
+const replacementPlan=join(state,'replacement-lock-plan.json');
+save(replacementPlan,{scope:'targeted',reason:'Exercise lock ownership during a running check',commands:[[process.execPath,'-e','setTimeout(()=>{},400)']]});
+const child=spawn(process.execPath,[join(skill,'scripts/repair-state.mjs'),'verify',replacementPlan],{cwd:repo,stdio:'ignore'});
+for(let n=0;n<100&&!existsSync(join(repairLock,'owner.json'));n++)await new Promise(done=>setTimeout(done,10));
+assert(existsSync(join(repairLock,'owner.json')),'child acquired repair lock');
+const displaced=repairLock+'.displaced';renameSync(repairLock,displaced);
+mkdirSync(repairLock);save(join(repairLock,'owner.json'),{pid:process.pid,startedAt:new Date().toISOString(),token:'replacement-owner'});
+const childStatus=await new Promise(done=>child.once('close',done));
+assert.equal(childStatus,0);
+assert(existsSync(join(repairLock,'owner.json')),'exiting owner must not remove a replacement lock');
+rmSync(repairLock,{recursive:true,force:true});rmSync(displaced,{recursive:true,force:true});
 // A later HEAD invalidates state rather than resetting it.
 git('commit','--allow-empty','-m','external');
 assert.match(fail('current'),/HEAD moved/);

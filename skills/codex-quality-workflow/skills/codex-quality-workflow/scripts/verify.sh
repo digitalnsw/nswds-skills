@@ -20,12 +20,10 @@ commands_file=""
 if [[ "$mode" == "full" ]]; then commands_file="$(node "$script_dir/quality-init.mjs" codex resolve)"; fi
 dependency_fingerprint=""
 if [[ "$mode" == "full" ]]; then
-  if [[ -f package-lock.json || -f npm-shrinkwrap.json ]]; then
-    node "$script_dir/dependency-preflight.mjs" check || {
-      echo "Dependency preflight blocked validation. The parent should follow dependency-preflight.md before classifying this as a code failure." >&2
-      exit 78
-    }
-  fi
+  node "$script_dir/dependency-preflight.mjs" check || {
+    echo "Dependency preflight blocked validation. The parent should follow dependency-preflight.md before classifying this as a code failure." >&2
+    exit 78
+  }
   dependency_fingerprint="$(node "$script_dir/dependency-preflight.mjs" fingerprint)"
 fi
 ran=0

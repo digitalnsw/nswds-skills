@@ -282,3 +282,24 @@ ignore:
         expires: 2027-08-31T00:00:00.000Z
 
   # repo-specific
+
+# ── repo-specific: Snyk Code excludes ────────────────────────────────────
+# The workflow/eval packages here are installable dev/CI tooling. Snyk Code
+# flags findings in their scripts — 1 MEDIUM Indirect Command Injection and 30
+# LOW Path Traversal — all the same shape: an unsanitised command-line ARGUMENT
+# flows into fs/child_process. In every case the argument is trusted operator or
+# CI input to a locally-run tool, not an untrusted-input boundary, and the
+# invoker already has full filesystem access; the command-injection case also
+# runs spawnSync with shell:false, so no shell is invoked. Excluded rather than
+# `ignore`d because .snyk finding-level ignores are not honoured for Snyk Code
+# in this org — path exclude is the working in-repo mechanism (as in
+# nswds-email-framework). Scoped to the tooling script paths and the one eval
+# harness, not whole packages, so Code findings in authored skill content
+# elsewhere still surface.
+exclude:
+  code:
+    - skills/australian-style-manual/evals/run.mjs
+    - skills/claude-code-quality-workflow/scripts/**
+    - skills/claude-code-quality-workflow/.claude/quality-workflow/scripts/**
+    - skills/codex-quality-workflow/scripts/**
+    - skills/codex-quality-workflow/skills/codex-quality-workflow/scripts/**

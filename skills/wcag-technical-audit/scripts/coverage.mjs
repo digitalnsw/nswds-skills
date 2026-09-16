@@ -23,7 +23,7 @@ export function initialise(level, scope) {
   return {
     wcagVersion: '2.2', level, specification: catalogue.source,
     target: '', build: '', date: '', coverageMode: 'exhaustive', environments: [],
-    scope,
+    scope, alternateVersions: [],
     results: scope.flatMap((item) => criteria(level).map((criterion) => ({
       scope: item, criterion: criterion.id, ...emptyResult(), finding: '',
     }))),
@@ -48,6 +48,33 @@ function checkResult(row, label, complete, requirement = false) {
   }
   if (complete) assert.ok(terminal, `${label}: unfinished (${row.status})`)
 }
+function validDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const [year, month, day] = value.split('-').map(Number)
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1]
+}
+function validateAlternates(audit) {
+  const mappings = audit.alternateVersions === undefined ? [] : audit.alternateVersions
+  assert.ok(Array.isArray(mappings), 'alternateVersions must be an array')
+  const originals = new Set()
+  const passing = (row) => ['pass', 'not-applicable'].includes(row.status)
+  for (const mapping of mappings) {
+    assert.ok(audit.scope.includes(mapping.original) && !originals.has(mapping.original), 'Unknown or duplicate alternate original')
+    originals.add(mapping.original)
+    uniqueScope(mapping.alternates)
+    assert.ok(mapping.alternates.every((id) => audit.scope.includes(id) && id !== mapping.original), 'Unknown or self-referencing alternate')
+    for (const condition of ['equivalence', 'currency', 'availability', 'reachability']) {
+      assert.ok(list(mapping[condition]), `Alternate ${condition} evidence required`)
+    }
+    assert.ok(['accessible-mechanism', 'only-via-alternate', 'only-via-conforming-gateway'].includes(mapping.reachabilityMode), 'Invalid alternate reachability mode')
+    assert.ok(audit.results.filter((row) => mapping.alternates.includes(row.scope)).every(passing), 'Alternate must directly pass all criteria')
+  }
+  // A claimed alternate must be independently conforming, not rely on another mapping.
+  assert.ok(mappings.every((mapping) => mapping.alternates.every((id) => !originals.has(id))), 'Alternate mappings cannot chain or cycle')
+  return originals
+}
 export function validate(audit, complete = false) {
   assert.equal(audit.wcagVersion, '2.2', 'This helper supports only WCAG 2.2')
   assert.equal(audit.specification, catalogue.source, 'Unexpected pinned specification')
@@ -55,6 +82,7 @@ export function validate(audit, complete = false) {
   assert.ok(['exhaustive', 'sampled'].includes(audit.coverageMode), 'Declare exhaustive or sampled coverage')
   assert.ok(Array.isArray(audit.environments), 'Environments must be an array')
   for (const key of ['target', 'build', 'date']) assert.equal(typeof audit[key], 'string', `${key} must be a string`)
+  if (audit.date !== '' || complete) assert.ok(validDate(audit.date), 'Date must be a real calendar date in YYYY-MM-DD format')
   if (complete) {
     for (const key of ['target', 'build', 'date']) assert.ok(nonempty(audit[key]), `Record ${key}`)
     assert.ok(list(audit.environments), 'Record test environments')
@@ -76,8 +104,12 @@ export function validate(audit, complete = false) {
     checkResult(result, result.requirement, complete, true)
   }
   assert.equal(remaining.size, 0, 'Missing conformance requirements')
+  const alternates = validateAlternates(audit)
   if (audit.conformanceRequirements.find((row) => row.requirement === 'conformance-level').status === 'pass') {
-    assert.ok(audit.results.every((row) => ['pass', 'not-applicable'].includes(row.status)), 'Conformance-level pass contradicts failed or unfinished criteria')
+    assert.ok(audit.results.every((row) => ['pass', 'not-applicable'].includes(row.status) || (row.status === 'fail' && row.remainingTests.length === 0 && alternates.has(row.scope))), 'Conformance-level pass contradicts failed or unfinished criteria')
+  }
+  if (audit.conformanceRequirements.find((row) => row.requirement === 'non-interference').status === 'pass') {
+    assert.ok(audit.results.filter((row) => ['1.4.2', '2.1.2', '2.3.1', '2.2.2'].includes(row.criterion)).every((row) => ['pass', 'not-applicable'].includes(row.status)), 'Non-interference pass contradicts failed or unfinished criteria')
   }
   return counts
 }

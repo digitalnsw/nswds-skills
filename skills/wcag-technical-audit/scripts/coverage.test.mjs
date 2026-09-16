@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { spawnSync } from 'node:child_process'
 import { criteria, initialise, validate } from './coverage.mjs'
 
 const draft = () => initialise('AA', ['/sign-in#empty;desktop', '/sign-in#error;desktop'])
@@ -84,4 +89,97 @@ test('preserves unfinished checks even when a failure is already established', (
   assert.throws(() => validate(audit, true), /outstanding tests/)
   audit.results[0].status = 'pass'
   assert.throws(() => validate(audit), /outstanding tests/)
+})
+
+test('validates real dates in drafts and completed records', () => {
+  for (const date of ['tomorrow', '2026-02-31', '2025-02-29', '1900-02-29', '2026-00-01', '2026-13-01', '2026-01-00', '0000-01-01', '2026-1-01', '2026-09-16T00:00:00Z']) {
+    const audit = completed(); audit.date = date
+    for (const complete of [false, true]) assert.throws(() => validate(audit, complete), /calendar date/)
+  }
+  for (const date of ['2024-02-29', '2000-02-29', '2026-09-16']) {
+    const audit = completed(); audit.date = date; validate(audit, true)
+  }
+  const audit = completed(); audit.date = ''; validate(audit)
+  assert.throws(() => validate(audit, true), /calendar date/)
+})
+function alternateFixture() {
+  const audit = completed()
+  Object.assign(audit.results[0], { status: 'fail', finding: 'F-001' })
+  audit.alternateVersions = [{ original: audit.scope[0], alternates: [audit.scope[1]], equivalence: ['fixture'], currency: ['fixture'], availability: ['fixture'], reachability: ['fixture'], reachabilityMode: 'accessible-mechanism' }]
+  return audit
+}
+test('accepts evidenced alternate mappings while preserving original failures', () => {
+  for (const reachabilityMode of ['accessible-mechanism', 'only-via-alternate', 'only-via-conforming-gateway']) {
+    const audit = alternateFixture(); audit.alternateVersions[0].reachabilityMode = reachabilityMode
+    assert.equal(validate(audit, true).fail, 1)
+  }
+  const legacy = completed(); delete legacy.alternateVersions; validate(legacy, true)
+})
+test('rejects invalid or unevidenced alternate mappings', () => {
+  const mutations = [
+    (a) => { a.alternateVersions = [] },
+    (a) => { a.alternateVersions = null },
+    (a) => { a.alternateVersions[0].alternates = ['missing'] },
+    (a) => { a.alternateVersions[0].alternates = [a.scope[0]] },
+    (a) => { a.alternateVersions.push(structuredClone(a.alternateVersions[0])) },
+    (a) => { a.alternateVersions[0].reachabilityMode = 'unverified' },
+    ...['equivalence', 'currency', 'availability', 'reachability'].map((key) => (a) => { a.alternateVersions[0][key] = [] }),
+    (a) => { Object.assign(a.results.find((r) => r.scope === a.scope[1]), { status: 'fail', finding: 'F-002' }) },
+    (a) => { a.results.find((r) => r.scope === a.scope[1]).status = 'manual-needed' },
+    (a) => { a.results[0].remainingTests = ['unfinished original check'] },
+  ]
+  for (const mutate of mutations) { const audit = alternateFixture(); mutate(audit); assert.throws(() => validate(audit)) }
+})
+test('rejects mapping cycles and preserves non-interference requirements', () => {
+  const cycle = completed()
+  const mapping = alternateFixture().alternateVersions[0]
+  cycle.alternateVersions = [mapping, { ...mapping, original: cycle.scope[1], alternates: [cycle.scope[0]] }]
+  assert.throws(() => validate(cycle), /chain or cycle/)
+  for (const criterion of ['1.4.2', '2.1.2', '2.3.1', '2.2.2']) {
+    const audit = alternateFixture()
+    Object.assign(audit.results.find((r) => r.scope === audit.scope[0] && r.criterion === criterion), { status: 'fail', finding: 'F-002' })
+    assert.throws(() => validate(audit), /Non-interference/)
+    audit.conformanceRequirements.find((r) => r.requirement === 'non-interference').status = 'fail'
+    validate(audit, true)
+  }
+})
+
+test('CLI persists matrices, checks completion and protects existing files', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'wcag-cli-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const script = fileURLToPath(new URL('./coverage.mjs', import.meta.url))
+  const run = (...args) => spawnSync(process.execPath, [script, ...args], { cwd: directory, encoding: 'utf8' })
+  const output = join(directory, 'audit.json')
+  const init = run('init', '--scope', '/', '--output', output)
+  assert.equal(init.status, 0, init.stderr)
+  assert.match(init.stdout, /Created 55 untested/)
+  const original = readFileSync(output, 'utf8')
+  assert.equal(JSON.parse(original).results.length, 55)
+  assert.equal(run('check', output).status, 0)
+  assert.equal(run('check', output, '--complete').status, 1)
+  assert.equal(run('init', '--scope', '/', '--output', output).status, 1)
+  assert.equal(readFileSync(output, 'utf8'), original)
+  writeFileSync(output, JSON.stringify(completed()))
+  const complete = run('check', output, '--complete')
+  assert.equal(complete.status, 0, complete.stderr)
+  assert.match(complete.stdout, /"pass": 110/)
+  assert.match(complete.stdout, /require evaluator review/)
+  for (const args of [[], ['invalid'], ['init', '--scope'], ['init', '--unknown', 'x'], ['init', '--scope', '/'], ['check'], ['check', 'missing.json'], ['check', output, '--invalid'], ['check', output, '--complete', 'extra']]) {
+    const result = run(...args)
+    assert.equal(result.status, 1, JSON.stringify(args))
+    assert.ok(result.stderr.trim())
+  }
+  writeFileSync(output, '{broken')
+  assert.equal(run('check', output).status, 1)
+})
+
+test('supports several alternate pages without accepting missing coverage', () => {
+  const audit = alternateFixture()
+  const extra = 'alternate-confirmation'
+  audit.scope.push(extra)
+  audit.results.push(...audit.results.filter((r) => r.scope === audit.scope[1]).map((r) => ({ ...structuredClone(r), scope: extra })))
+  audit.alternateVersions[0].alternates.push(extra)
+  assert.equal(validate(audit, true).fail, 1)
+  audit.results.pop()
+  assert.throws(() => validate(audit), /Missing 1/)
 })

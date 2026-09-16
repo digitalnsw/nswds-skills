@@ -78,3 +78,5 @@ The package's skills, agents, schemas and runtime scripts sit under `.claude/` (
 Skills in this collection are deliberately tool-agnostic and org-agnostic: they must not reference specific repositories, organisations, or machines. Supporting material lives in the skill's `references/` directory and is linked from the SKILL.md.
 
 Workflow packages target one agent by design, but are held to the same org-agnostic rule. Each carries its own README, installer and self-test.
+
+The Australian Style Manual skill includes [opt-in behavioural evaluations](skills/australian-style-manual/evals/README.md) for assessment-only and editing requests, with checks for protected content and unintended file changes.

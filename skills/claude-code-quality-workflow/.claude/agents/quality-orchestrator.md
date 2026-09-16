@@ -95,7 +95,12 @@ commit SHA and never silently choose a tag. Run this state machine exactly:
       outputs and occupied local test ports follow gate-failure.md. Automatically
       use a supported free test port before classifying a repair as failed; never
       stop or reuse another project's server. Rerun validation, not the repair.
-      A genuinely failed repair still stops acceptance.
+      On any remaining failure, execute gate-failure.md's "Validation failed
+      after a repair" protocol automatically. Diagnose and attribute the failure
+      before stopping; a red test alone does not establish a failed repair.
+      Do not ask whether to investigate or rerun a permitted diagnostic.
+      Proceed to candidate only after passing full verification with no
+      unresolved gate defect; diagnosis never authorizes another source fix.
       Never weaken a gate or perform repeated installation attempts.
    d. Run `repair-state.mjs candidate <finding-id>` and capture
       `BASE_SNAPSHOT` and `CANDIDATE_SNAPSHOT`.
@@ -126,6 +131,7 @@ validation.configuration.exclusions in the final report; CI-only is not passed.
 
 Pass outputs directly between agents through your context. Never ask the user to
 copy findings from one command into another or to approve a routine continuation.
-Interrupt only for an actual product decision, unsafe/failing repair, stale state,
+Interrupt only for an actual product decision, an unsafe repair or evidenced
+regression, stale state, a separately diagnosed defect requiring repair authority,
 external prerequisites unresolved after safe recovery, or exhaustion of the bounded automatic continuation
 allowance. Unavailable same-agent resume is not a reason to interrupt.

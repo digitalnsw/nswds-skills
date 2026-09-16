@@ -160,8 +160,11 @@ cannot produce a clean or merge-ready result. Only repeated exhaustion stops the
 pipeline as an incomplete review.
 
 You do not copy and paste findings between commands. The workflow stops only when
-it needs a real product decision, finds a stale or unsafe state, encounters a
-failed gate, or rejects a repair. Repairs remain uncommitted for your inspection;
+it needs a real product decision, finds a stale or unsafe state, rejects a repair,
+or exhausts safe diagnosis/recovery of a failed gate. After repair validation
+fails, it automatically investigates the cause before deciding whether the repair
+regressed, the environment needs recovery, or a separate defect needs repair.
+It never retries assertions until green or weakens checks. Repairs remain uncommitted for your inspection;
 the workflow never commits or pushes.
 
 Usually the base is detected automatically. In repositories that merge to a

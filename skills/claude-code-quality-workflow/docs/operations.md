@@ -74,9 +74,18 @@ cheap failing unit test. The repair agent must state why, preserve concrete stat
 or runtime evidence, make the smallest change, and run the strongest available
 checks. “It seems right” is not evidence.
 
+## Validation fails after a repair
+
+This is not yet proof that the repair introduced the failure. The parent follows
+`quality-workflow/gate-failure.md` automatically: preserve the pending diff and
+logs, inspect the failure, gather bounded reproduction evidence, then attribute
+the cause. Read-only diagnosis does not spend another source-repair attempt.
+A green rerun alone cannot dismiss an unexplained intermittent failure.
+
 ## A repair introduces another problem
 
-The orchestrator stops. It does not send the new problem to the repairer. The last
+Once causal evidence establishes a regression, the orchestrator stops further
+writes. It does not send the new problem to the repairer. The last
 accepted hidden snapshot remains recorded, while the rejected candidate remains in
 the working tree for inspection. Deliberately restore or revise that one repair,
 then rerun the pipeline. If it depends on unresolved intent, classify it as

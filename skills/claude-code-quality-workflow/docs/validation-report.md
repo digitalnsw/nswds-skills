@@ -1,5 +1,24 @@
 # Validation report
 
+## Post-repair diagnosis update — 16 September 2026
+
+Both package self-test suites passed. Independent read-only forward-testing of
+both adapters exercised an unexplained resize failure, a subsequent green rerun,
+a proven repair regression, a recoverable port collision, moved HEAD with a
+pending repair, and exhausted diagnostic allowance. The exercise checked next
+actions and acceptance decisions, not keyword presence. It exposed a retry-budget
+ambiguity; the protocol now distinguishes pre-test port launches from execution
+of the full gate checks. This was instruction-level scenario testing, not a live
+end-to-end multi-agent repair run.
+
+In the motivating repository, a browser trace reproduced a 146px measurement
+while Public Sans was loading and 147px once it loaded. The resize test now waits
+for the iframe document and fonts before measuring; its exact equality assertion
+is unchanged. Three targeted runs and all 48 docs browser tests passed. This does
+not certify that repository's pending repair or its full merge-gate set.
+
+## Original package validation
+
 Validated on 10 September 2026 with isolated temporary Git repositories and an
 isolated Claude configuration target.
 

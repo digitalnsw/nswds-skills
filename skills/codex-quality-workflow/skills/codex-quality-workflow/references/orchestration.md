@@ -96,15 +96,19 @@ Review-only mode stops with consolidated findings and coverage. Full mode contin
    accepted snapshot as baseSha. This worker must reproduce, add a meaningful
    regression test, make the smallest fix, run targeted checks, and return its
    report. It must not touch unrelated findings, weaken gates, commit, or push.
-4. Repairs get one attempt only. An error or partial repair stops the workflow;
-   leave its diff available for inspection. Do not automatically retry writes.
+4. Repairs get one source-write attempt only. An error or partial repair blocks
+   acceptance and further writes; preserve its diff. Complete safe read-only
+   diagnosis before reporting the blocker. Do not automatically retry writes.
 5. If gate definitions changed, refresh init using the protocol without weakening
    checks. Run full verify in the parent. A concrete dependency-resolution failure
    goes through dependency-preflight.md once; missing build outputs and occupied
    test ports follow gate-failure.md's bounded recovery before classifying a
    repair as failed. Port recovery reruns validation, not the repair worker.
-   A genuinely failed repair still stops acceptance;
-   do not start a fix-the-fix loop. On success create candidate R-xxx using
+   On any remaining failure, read and execute gate-failure.md's
+   "Validation failed after a repair" protocol automatically. A failed gate is
+   not proof of a failed repair. Diagnose and attribute it before stopping; do
+   not ask permission for routine investigation or retry writes. Only after
+   passing full verification with no unresolved gate defect create candidate R-xxx using
    repair-state.mjs. Run `repair-review` with target=repair-diff and the candidate's
    base/head pair; inspect TWO-endpoint diff, never triple-dot. Pass the original
    finding as input. Only COMPLETE and zero findings authorizes snapshot accept.

@@ -10,5 +10,7 @@ background: false
 
 Run the complete quality pipeline now. Optional destination base branch:
 `$ARGUMENTS`. Do not ask the user to manually relay output between stages. Preserve
-the read-only reviewer/write-enabled repairer boundary and stop on any unsafe or
-unaccepted repair rather than looping on fixes.
+the read-only reviewer/write-enabled repairer boundary. A failed validation blocks
+acceptance, not diagnosis: automatically follow quality-workflow/gate-failure.md's
+post-repair investigation protocol before pausing. Never retry source fixes or
+accept an unsafe/unverified repair.

@@ -39,7 +39,11 @@ travel into the continuation; narration contributes no completed coverage.
 The triager must account for every finding. A separate workspace-write worker
 repairs one confirmed defect, once. The parent validates, captures the candidate,
 and obtains an independent repair review before acceptance. A final fresh review
-checks the whole accepted change. Failed or disputed repairs stop the workflow.
+checks the whole accepted change. Failed validation triggers automatic bounded
+diagnosis before a repair is judged failed: inspect the assertion, compare the
+pending diff and gather reproduction evidence. Proven regressions, disputed
+repairs and separately diagnosed defects that need new repair authority still
+block acceptance; a passing retry never erases an unexplained intermittent failure.
 Repairs remain uncommitted, and the user's staging area stays under their control.
 
 The analytical content preserves all nine review passes from the Claude package.

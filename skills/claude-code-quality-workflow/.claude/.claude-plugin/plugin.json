@@ -1,6 +1,6 @@
 {
   "name": "claude-code-quality-workflow",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "description": "Evidence-driven read-only review and controlled repair workflow for Claude Code",
   "author": { "name": "Claude Code Quality Workflow Contributors" }
 }

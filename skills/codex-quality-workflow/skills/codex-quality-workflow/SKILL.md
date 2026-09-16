@@ -49,6 +49,9 @@ local test port through the repository's supported free-port mechanism. Never
 stop or reuse another project's server. Then continue initial read-only review
 when evidence is reviewable. In full mode confirmed gate defects enter normal
 triage and targeted repair. Failed gates block approval, not investigation.
+This also applies after a repair: automatically follow the post-repair diagnosis
+protocol in that reference before declaring the repair failed or pausing. The
+one-attempt rule prohibits repeated source fixes, not bounded investigation.
 
 Report evidence and outcomes plainly. Routine partial review recovery is automatic.
 Incomplete lanes block triage and a passed result. Stop for product decisions,

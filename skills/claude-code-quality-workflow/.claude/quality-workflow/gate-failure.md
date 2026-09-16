@@ -10,6 +10,76 @@ nonzero on failure; inspect its manifest instead of stopping on that exit alone.
 Missing/stale/unsafe evidence, busy validation, or launch/prerequisite errors must
 be resolved before using it. Final review still requires `ready=true`.
 
+## Validation failed after a repair: investigate automatically
+
+A nonzero validation result is not a verdict on the repair. Keep acceptance
+blocked, but continue bounded diagnosis without asking whether to investigate,
+resume, or rerun a diagnostic. The one-attempt rule limits source repair writes,
+not read-only analysis or evidence gathering by the parent. Never report "failed
+repair" from a test failure alone, or stop with "cause not established" while safe
+diagnostic work remains.
+
+1. Preserve the pending diff, original log and exact failed command/test. Record
+   HEAD, accepted snapshot, source/index state, gate configuration and environment.
+   Compare HEAD to the frozen implementation before any acceptance action. A
+   moved HEAD is stale workflow state: do not reinitialize, refreeze, or overwrite
+   acceptance records around a pending repair. Safe diagnosis may continue, but
+   re-entry to the acceptance pipeline requires an explicit reconciled checkpoint.
+2. Read the failing assertion, fixture/setup and relevant implementation alongside
+   the repair's two-endpoint diff. Test the plausible causal link; changed-file
+   non-overlap alone does not prove independence. Inspect readiness conditions
+   (for example fonts, images, async rendering or service startup) before calling
+   small numerical differences harmless. Never widen tolerances or add sleeps
+   merely to turn a red check green.
+3. Follow dependency/build/port recovery below for concrete environment failures.
+   Otherwise reproduce the smallest unchanged failing test with the same build,
+   runtime and relevant configuration. The parent may run source-preserving
+   diagnostics; read-only reviewers may inspect the evidence but not run mutating
+   tests. Retain every outcome, including passes. If useful and safe, compare the
+   last accepted snapshot in an isolated checkout with independently prepared
+   dependencies/artifacts; never stash/reset the live tree or share writable
+   node_modules/build outputs. Baseline evidence must name its snapshot and
+   environment; an old successful run is not a controlled comparison.
+4. Persist a diagnosis record under Git-local workflow state, keyed by finding,
+   accepted snapshot, pending source fingerprint and failed gate. Record commands,
+   logs, observations, cause classification and next action. Reserve each attempt
+   in that record before execution; compare source/index/HEAD afterwards and stop
+   acceptance if they changed. Allow at most three
+   targeted diagnostic executions total across candidate/baseline (at most ten
+   minutes each), then at most one fresh full execution of the gate checks after
+   a demonstrated environment recovery. Count an already completed recovery
+   verification toward this allowance, not as permission for an additional run.
+   Port startup collisions before tests begin use the port-specific launch budget
+   below; those launches do not count as executed gate checks. Existing recovery
+   budgets still apply; do not multiply them, reset the record, or retry suites until
+   green. Stop earlier when the cause is established. Read-only inspection need
+   not consume another source-repair attempt.
+
+Route the evidence, not just the exit status:
+
+- **Environment recovered:** run the full unchanged gate set without result reuse.
+  If it passes and no actionable defect remains, continue candidate/independent
+  repair-diff review automatically. Passing a targeted test alone cannot accept.
+- **Repair-caused regression:** show the causal evidence; preserve the unaccepted
+  diff and stop further writes. Do not send the repairer another fix attempt.
+- **Independent code/test defect:** record a separate schema-shaped finding and
+  triage it; do not mislabel the pending repair as the cause. With a pending
+  unaccepted repair, do not layer a second source repair or silently accept the
+  first. Complete safe diagnosis and report the precise checkpoint/authorization
+  needed to repair that distinct defect. Full mode alone does not bypass the
+  accepted-snapshot invariant.
+- **Intermittent failure:** preserve it as unresolved until its cause is explained
+  and any confirmed defect is addressed. One passing rerun, a one-pixel difference,
+  or success on the baseline is not proof of harmless flakiness or permission to
+  skip the test. A reproducible readiness race is a test defect, not environment
+  recovery; route it as a separate finding unless the repair introduced it.
+- **Unresolved/external/budget exhausted:** report the investigated hypotheses,
+  actual evidence, remaining uncertainty and exact blocker. Ask only for a real
+  decision, required permission or source-repair authority, not routine diagnosis.
+
+A failure can block acceptance without ending useful work. No failed, skipped,
+unrun or unexplained intermittent gate can be reported as a passed final result.
+
 ## Occupied local test port (also during repair validation)
 
 An occupied test port is not a failed code repair or an unresolved external

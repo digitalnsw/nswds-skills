@@ -1,0 +1,436 @@
+{
+  "version": "2.2",
+  "source": "https://www.w3.org/TR/2024/REC-WCAG22-20241212/",
+  "criteria": [
+    {
+      "id": "1.1.1",
+      "level": "A",
+      "anchor": "non-text-content"
+    },
+    {
+      "id": "1.2.1",
+      "level": "A",
+      "anchor": "audio-only-and-video-only-prerecorded"
+    },
+    {
+      "id": "1.2.2",
+      "level": "A",
+      "anchor": "captions-prerecorded"
+    },
+    {
+      "id": "1.2.3",
+      "level": "A",
+      "anchor": "audio-description-or-media-alternative-prerecorded"
+    },
+    {
+      "id": "1.2.4",
+      "level": "AA",
+      "anchor": "captions-live"
+    },
+    {
+      "id": "1.2.5",
+      "level": "AA",
+      "anchor": "audio-description-prerecorded"
+    },
+    {
+      "id": "1.2.6",
+      "level": "AAA",
+      "anchor": "sign-language-prerecorded"
+    },
+    {
+      "id": "1.2.7",
+      "level": "AAA",
+      "anchor": "extended-audio-description-prerecorded"
+    },
+    {
+      "id": "1.2.8",
+      "level": "AAA",
+      "anchor": "media-alternative-prerecorded"
+    },
+    {
+      "id": "1.2.9",
+      "level": "AAA",
+      "anchor": "audio-only-live"
+    },
+    {
+      "id": "1.3.1",
+      "level": "A",
+      "anchor": "info-and-relationships"
+    },
+    {
+      "id": "1.3.2",
+      "level": "A",
+      "anchor": "meaningful-sequence"
+    },
+    {
+      "id": "1.3.3",
+      "level": "A",
+      "anchor": "sensory-characteristics"
+    },
+    {
+      "id": "1.3.4",
+      "level": "AA",
+      "anchor": "orientation"
+    },
+    {
+      "id": "1.3.5",
+      "level": "AA",
+      "anchor": "identify-input-purpose"
+    },
+    {
+      "id": "1.3.6",
+      "level": "AAA",
+      "anchor": "identify-purpose"
+    },
+    {
+      "id": "1.4.1",
+      "level": "A",
+      "anchor": "use-of-color"
+    },
+    {
+      "id": "1.4.2",
+      "level": "A",
+      "anchor": "audio-control"
+    },
+    {
+      "id": "1.4.3",
+      "level": "AA",
+      "anchor": "contrast-minimum"
+    },
+    {
+      "id": "1.4.4",
+      "level": "AA",
+      "anchor": "resize-text"
+    },
+    {
+      "id": "1.4.5",
+      "level": "AA",
+      "anchor": "images-of-text"
+    },
+    {
+      "id": "1.4.6",
+      "level": "AAA",
+      "anchor": "contrast-enhanced"
+    },
+    {
+      "id": "1.4.7",
+      "level": "AAA",
+      "anchor": "low-or-no-background-audio"
+    },
+    {
+      "id": "1.4.8",
+      "level": "AAA",
+      "anchor": "visual-presentation"
+    },
+    {
+      "id": "1.4.9",
+      "level": "AAA",
+      "anchor": "images-of-text-no-exception"
+    },
+    {
+      "id": "1.4.10",
+      "level": "AA",
+      "anchor": "reflow"
+    },
+    {
+      "id": "1.4.11",
+      "level": "AA",
+      "anchor": "non-text-contrast"
+    },
+    {
+      "id": "1.4.12",
+      "level": "AA",
+      "anchor": "text-spacing"
+    },
+    {
+      "id": "1.4.13",
+      "level": "AA",
+      "anchor": "content-on-hover-or-focus"
+    },
+    {
+      "id": "2.1.1",
+      "level": "A",
+      "anchor": "keyboard"
+    },
+    {
+      "id": "2.1.2",
+      "level": "A",
+      "anchor": "no-keyboard-trap"
+    },
+    {
+      "id": "2.1.3",
+      "level": "AAA",
+      "anchor": "keyboard-no-exception"
+    },
+    {
+      "id": "2.1.4",
+      "level": "A",
+      "anchor": "character-key-shortcuts"
+    },
+    {
+      "id": "2.2.1",
+      "level": "A",
+      "anchor": "timing-adjustable"
+    },
+    {
+      "id": "2.2.2",
+      "level": "A",
+      "anchor": "pause-stop-hide"
+    },
+    {
+      "id": "2.2.3",
+      "level": "AAA",
+      "anchor": "no-timing"
+    },
+    {
+      "id": "2.2.4",
+      "level": "AAA",
+      "anchor": "interruptions"
+    },
+    {
+      "id": "2.2.5",
+      "level": "AAA",
+      "anchor": "re-authenticating"
+    },
+    {
+      "id": "2.2.6",
+      "level": "AAA",
+      "anchor": "timeouts"
+    },
+    {
+      "id": "2.3.1",
+      "level": "A",
+      "anchor": "three-flashes-or-below-threshold"
+    },
+    {
+      "id": "2.3.2",
+      "level": "AAA",
+      "anchor": "three-flashes"
+    },
+    {
+      "id": "2.3.3",
+      "level": "AAA",
+      "anchor": "animation-from-interactions"
+    },
+    {
+      "id": "2.4.1",
+      "level": "A",
+      "anchor": "bypass-blocks"
+    },
+    {
+      "id": "2.4.2",
+      "level": "A",
+      "anchor": "page-titled"
+    },
+    {
+      "id": "2.4.3",
+      "level": "A",
+      "anchor": "focus-order"
+    },
+    {
+      "id": "2.4.4",
+      "level": "A",
+      "anchor": "link-purpose-in-context"
+    },
+    {
+      "id": "2.4.5",
+      "level": "AA",
+      "anchor": "multiple-ways"
+    },
+    {
+      "id": "2.4.6",
+      "level": "AA",
+      "anchor": "headings-and-labels"
+    },
+    {
+      "id": "2.4.7",
+      "level": "AA",
+      "anchor": "focus-visible"
+    },
+    {
+      "id": "2.4.8",
+      "level": "AAA",
+      "anchor": "location"
+    },
+    {
+      "id": "2.4.9",
+      "level": "AAA",
+      "anchor": "link-purpose-link-only"
+    },
+    {
+      "id": "2.4.10",
+      "level": "AAA",
+      "anchor": "section-headings"
+    },
+    {
+      "id": "2.4.11",
+      "level": "AA",
+      "anchor": "focus-not-obscured-minimum"
+    },
+    {
+      "id": "2.4.12",
+      "level": "AAA",
+      "anchor": "focus-not-obscured-enhanced"
+    },
+    {
+      "id": "2.4.13",
+      "level": "AAA",
+      "anchor": "focus-appearance"
+    },
+    {
+      "id": "2.5.1",
+      "level": "A",
+      "anchor": "pointer-gestures"
+    },
+    {
+      "id": "2.5.2",
+      "level": "A",
+      "anchor": "pointer-cancellation"
+    },
+    {
+      "id": "2.5.3",
+      "level": "A",
+      "anchor": "label-in-name"
+    },
+    {
+      "id": "2.5.4",
+      "level": "A",
+      "anchor": "motion-actuation"
+    },
+    {
+      "id": "2.5.5",
+      "level": "AAA",
+      "anchor": "target-size-enhanced"
+    },
+    {
+      "id": "2.5.6",
+      "level": "AAA",
+      "anchor": "concurrent-input-mechanisms"
+    },
+    {
+      "id": "2.5.7",
+      "level": "AA",
+      "anchor": "dragging-movements"
+    },
+    {
+      "id": "2.5.8",
+      "level": "AA",
+      "anchor": "target-size-minimum"
+    },
+    {
+      "id": "3.1.1",
+      "level": "A",
+      "anchor": "language-of-page"
+    },
+    {
+      "id": "3.1.2",
+      "level": "AA",
+      "anchor": "language-of-parts"
+    },
+    {
+      "id": "3.1.3",
+      "level": "AAA",
+      "anchor": "unusual-words"
+    },
+    {
+      "id": "3.1.4",
+      "level": "AAA",
+      "anchor": "abbreviations"
+    },
+    {
+      "id": "3.1.5",
+      "level": "AAA",
+      "anchor": "reading-level"
+    },
+    {
+      "id": "3.1.6",
+      "level": "AAA",
+      "anchor": "pronunciation"
+    },
+    {
+      "id": "3.2.1",
+      "level": "A",
+      "anchor": "on-focus"
+    },
+    {
+      "id": "3.2.2",
+      "level": "A",
+      "anchor": "on-input"
+    },
+    {
+      "id": "3.2.3",
+      "level": "AA",
+      "anchor": "consistent-navigation"
+    },
+    {
+      "id": "3.2.4",
+      "level": "AA",
+      "anchor": "consistent-identification"
+    },
+    {
+      "id": "3.2.5",
+      "level": "AAA",
+      "anchor": "change-on-request"
+    },
+    {
+      "id": "3.2.6",
+      "level": "A",
+      "anchor": "consistent-help"
+    },
+    {
+      "id": "3.3.1",
+      "level": "A",
+      "anchor": "error-identification"
+    },
+    {
+      "id": "3.3.2",
+      "level": "A",
+      "anchor": "labels-or-instructions"
+    },
+    {
+      "id": "3.3.3",
+      "level": "AA",
+      "anchor": "error-suggestion"
+    },
+    {
+      "id": "3.3.4",
+      "level": "AA",
+      "anchor": "error-prevention-legal-financial-data"
+    },
+    {
+      "id": "3.3.5",
+      "level": "AAA",
+      "anchor": "help"
+    },
+    {
+      "id": "3.3.6",
+      "level": "AAA",
+      "anchor": "error-prevention-all"
+    },
+    {
+      "id": "3.3.7",
+      "level": "A",
+      "anchor": "redundant-entry"
+    },
+    {
+      "id": "3.3.8",
+      "level": "AA",
+      "anchor": "accessible-authentication-minimum"
+    },
+    {
+      "id": "3.3.9",
+      "level": "AAA",
+      "anchor": "accessible-authentication-enhanced"
+    },
+    {
+      "id": "4.1.2",
+      "level": "A",
+      "anchor": "name-role-value"
+    },
+    {
+      "id": "4.1.3",
+      "level": "AA",
+      "anchor": "status-messages"
+    }
+  ]
+}

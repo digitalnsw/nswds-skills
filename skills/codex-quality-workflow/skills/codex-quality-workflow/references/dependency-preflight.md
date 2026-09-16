@@ -30,13 +30,14 @@ install dependencies. This is environment preparation, not a code-repair round.
 4. Lifecycle scripts are not silently reenabled. If a required native binary or
    generated dependency artifact is absent, inspect the specific script and
    request permission for that additional setup, then recheck source invariants.
-   Missing build outputs from a local workspace belong in the existing build/task
-   graph; they are not automatically dependency failures.
+   Missing build outputs from a local workspace follow gate-failure.md's bounded
+   producer recovery and diagnosis; they are not automatically dependency failures.
 5. On success, continue automatically with freeze/preparation and rerun the full
    configured validation. Do not reuse evidence from before restoration. The
    verifier checks preflight before its cache and fingerprints installed npm
    metadata so old failures/successes are not reused after restoration. A remaining
-   typecheck/test/lint failure still blocks review. Diagnose once; no install loop.
+   typecheck/test/lint failure blocks approval, not initial read-only diagnosis.
+   Follow gate-failure.md; no install loop.
 
 If a gate fails later with a concrete dependency-resolution error, run this check
 before classifying it. The parent may use the same one-attempt restoration path and

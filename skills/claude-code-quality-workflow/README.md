@@ -94,7 +94,8 @@ Setup does not execute guessed commands or install tools. Claude inspects their
 safety and records commands with provenance; the helper validates and saves the
 plan. CI-only checks remain explicit gaps in the evidence and final report. Local
 validation passing does not prove hosted CI or branch protection passed. Genuine
-missing tools, unclear gates or failing tests still block; a missing config alone
+missing tools or unclear gates still block setup; failing tests block approval,
+not initial diagnosis. A missing config alone
 no longer asks you to do the setup manually.
 
 ## Configure deterministic analysis
@@ -108,7 +109,8 @@ Each tab-separated line declares `required` or `advisory`, a name, and a command
 Commands receive the evidence directory, base/head SHAs, and diff path as
 environment variables. This is where to connect CodeQL, Semgrep, Sonar, custom
 architecture checks, or an existing security script. A failing required analyzer
-blocks review preparation; advisory output becomes evidence that reviewers must
+blocks approval, but safe evidence remains available for initial diagnosis;
+advisory output becomes evidence that reviewers must
 independently verify.
 
 The included hooks:

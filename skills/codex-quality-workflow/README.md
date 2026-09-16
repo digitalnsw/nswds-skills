@@ -67,7 +67,8 @@ local plan (shared with Claude). Explicit files are preserved. A global default
 inside the skill is a baseline fallback only, not repository onboarding. Analysis
 configuration still uses repo .codex, repo .claude, then skill-directory precedence.
 CI-only checks are recorded as gaps, not passed gates. Missing tools or failing
-checks still block; missing configuration alone no longer needs manual setup.
+checks still block approval; safe failed evidence can proceed to initial review
+and targeted repair in full mode. Missing configuration alone needs no manual setup.
 
 Evidence, reports, retry counters and hidden snapshots live under the Git path
 `codex-quality-workflow`. Use `git rev-parse --git-path codex-quality-workflow` in

@@ -42,7 +42,12 @@ Pass the user's selected model identifier when known; otherwise explicitly repor
 that workers use the CLI-configured model, which may differ from the desktop
 selection. Do not silently select a different model to recover an error.
 
+For failed validation, read `references/gate-failure.md`: diagnose, attempt one
+safe build-output recovery if applicable, then continue initial read-only review
+when evidence is reviewable. In full mode confirmed gate defects enter normal
+triage and targeted repair. Failed gates block approval, not investigation.
+
 Report evidence and outcomes plainly. Routine partial review recovery is automatic.
 Incomplete lanes block triage and a passed result. Stop for product decisions,
-failed gates after dependency preflight, rejected repairs, unavailable
+unsafe evidence, unresolved external prerequisites, rejected repairs, unavailable
 CLI/authentication, or retry exhaustion.

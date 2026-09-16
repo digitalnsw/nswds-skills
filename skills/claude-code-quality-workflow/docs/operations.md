@@ -24,7 +24,9 @@ only needed when operating individual stages manually.
 Open the evidence directory printed by `/prepare-review`. `validation.log` contains
 the full deterministic gate, `analyzers/` contains static-analysis output, and
 `manifest.json` identifies the exact base/head plus warnings. A failed validation,
-failed required analyzer, or command that mutated the reviewed state blocks review.
+failed required analyzer blocks approval. `REVIEWABLE=1` still permits initial
+diagnosis; unsafe or stale source blocks review. Follow the bundled
+`gate-failure.md` for one inspected build recovery and routing to triage/repair.
 
 A warning that validation is `generic-auto-detected` means the repository has not
 been initialized. `/quality-init` inspects and saves the gate plan; normal workflow,

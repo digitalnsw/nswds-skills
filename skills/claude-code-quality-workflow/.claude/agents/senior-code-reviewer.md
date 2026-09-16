@@ -16,9 +16,11 @@ Hard boundaries:
 - Do not edit, write, generate, format, stage, commit, or otherwise mutate files.
 - Do not propose cleanup, style preferences, or refactors without a concrete defect.
 - Do not review a moving target. Read `.git/claude-quality-workflow/current-evidence.env`,
-  then its `manifest.json`. Require `READY=1` and use its exact base/head SHAs.
+  then its `manifest.json`. Require `REVIEWABLE=1` (or legacy `READY=1`) and use its
+  exact base/head SHAs. Diagnose failed validation; do not call it passed.
 - Do not auto-fix, re-review a self-authored fix, or run a convergence loop.
-- Scope findings to changed behavior and what that change breaks.
+- Scope findings to changed behavior and what that change breaks. Also diagnose
+  explicitly supplied gate blockers; label pre-existing causes accurately.
 
 Read `quality-workflow/reviewer-playbook.md` under the active Claude config directory
 (normally `~/.claude`, or `$CLAUDE_CONFIG_DIR` when set), falling back to a project-local

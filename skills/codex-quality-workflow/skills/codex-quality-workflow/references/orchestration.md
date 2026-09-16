@@ -19,7 +19,10 @@ runs explicitly inside this workflow. It does not enforce a global Codex Stop ho
    and perform its check/bounded environment restore before freezing. Then run
    `bash <skill>/scripts/freeze.sh [branch]`, then
    `bash <skill>/scripts/prepare-review.sh initial`. Read the printed manifest.
-   Require ready=true. Full mode also requires validation.configured=true.
+   Read `references/gate-failure.md` when preparation fails. Initial lanes require
+   reviewable=true (or ready=true for legacy manifests), not passing gates.
+   Full mode also requires validation.configured=true. Final approval requires
+   ready=true; never interpret reviewable as passed.
    Config priority is repo `.codex/quality-workflow`, then repo
    `.claude/quality-workflow` (reuse the user's existing gate list), then the generated
    Git-local init plan. Global defaults alone do not count as repository setup.
@@ -60,7 +63,10 @@ updates during longer runs. Nonzero exit blocks dependent stages. Output JSON an
 event logs remain in the state directory; do not manually relay findings to users
 as instructions for the next stage.
 
-Always run senior. Add contract (passes 1,5,6), behavior (2,3,8), and gate (4,7,9)
+Always run senior. Always add gate (4,7,9) when validation failed or build recovery
+was needed; give it both original and fresh evidence, and retain any confirmed
+cache/producer defect even after recovery passes. Add contract (passes 1,5,6),
+behavior (2,3,8), and gate (4,7,9)
 when the change touches those areas. Use all four for an exhaustive/high-risk review.
 Independent read-only jobs may run in parallel. Supply each its own scope and no
 other reviewer's conclusions. The runner retries partial or malformed final output
@@ -85,7 +91,7 @@ Review-only mode stops with consolidated findings and coverage. Full mode contin
    The runner verifies ID preservation. If any finding NEEDS_DECISION, return the
    explicit question and pause before repairs. Never invent a contract.
 3. Run `node <skill>/scripts/repair-state.mjs init` once. For each CONFIRMED
-   BLOCKING/SHOULD_FIX finding, check the accepted state, save exactly that complete
+   BLOCKING/SHOULD_FIX finding (gate blockers first), check the accepted state, save exactly that complete
    finding to a file, and launch a `repair` job with that single input and the
    accepted snapshot as baseSha. This worker must reproduce, add a meaningful
    regression test, make the smallest fix, run targeted checks, and return its
@@ -94,7 +100,9 @@ Review-only mode stops with consolidated findings and coverage. Full mode contin
    leave its diff available for inspection. Do not automatically retry writes.
 5. If gate definitions changed, refresh init using the protocol without weakening
    checks. Run full verify in the parent. A concrete dependency-resolution failure
-   goes through dependency-preflight.md once; other failed gates stop. On success create candidate R-xxx using
+   goes through dependency-preflight.md once; missing build outputs follow
+   gate-failure.md's bounded recovery. A failed repair still stops acceptance;
+   do not start a fix-the-fix loop. On success create candidate R-xxx using
    repair-state.mjs. Run `repair-review` with target=repair-diff and the candidate's
    base/head pair; inspect TWO-endpoint diff, never triple-dot. Pass the original
    finding as input. Only COMPLETE and zero findings authorizes snapshot accept.
@@ -102,7 +110,9 @@ Review-only mode stops with consolidated findings and coverage. Full mode contin
 6. After accepted repairs, run prepare-review final and a fresh `final` job with
    all nine passes, the final manifest and its exact SHAs. No further automatic
    repair round. Without repairs the complete initial set is the final assessment;
-   still recheck that source/HEAD have not changed before claiming a passed result.
+   still require passing configured validation and recheck that source/HEAD have
+   not changed before claiming a passed result. Failed/unrun gates remain blockers
+   even when reviewers return no findings.
 
 ## Final report
 

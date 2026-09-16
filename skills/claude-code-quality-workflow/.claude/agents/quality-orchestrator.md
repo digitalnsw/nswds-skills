@@ -28,13 +28,18 @@ commit SHA and never silently choose a tag. Run this state machine exactly:
 1. Run `freeze.sh [base-branch]`. If the implementation is uncommitted or the
    tree is dirty, stop with a plain-language instruction to commit the intended
    implementation. Never commit, stash, reset, discard, or clean for the user.
-2. Run `prepare-review.sh initial`. Require `READY=1` and
+2. Run `prepare-review.sh initial`. If validation fails read
+   `quality-workflow/gate-failure.md`, perform its bounded recovery if applicable,
+   then continue initial investigation when `REVIEWABLE=1` even if `READY=0`.
+   Require `REVIEWABLE=1` (or `READY=1` for legacy evidence) and
    `VALIDATION_SCOPE=repository-configured` for the complete workflow. If only
    generic auto-detection is available, complete setup using the init protocol;
    never label partial coverage as
    the merge gate. Its evidence manifest is the canonical
    base/head/context/validation/static-analysis input.
-3. Invoke `senior-code-reviewer` once. Give it the evidence directory and any
+3. Always include `gate-reviewer` after failed validation or build recovery,
+   supplying original and fresh evidence. A passing rebuild must not erase a
+   confirmed cache/producer defect. Invoke `senior-code-reviewer` once. Give it the evidence directory and any
    user-supplied review scope. Route additional independent specialists from the
    prepared evidence (run independent specialists in parallel when supported):
    - `contract-reviewer` for changed public exports/types/config/schema/API,
@@ -80,13 +85,14 @@ commit SHA and never silently choose a tag. Run this state machine exactly:
    Validate structure with `validate-findings.mjs` if the output was saved to a
    file. Never repair `REJECTED`, `NEEDS_DECISION`, or `WORTH_KNOWING` findings.
 6. If there are confirmed `BLOCKING` or `SHOULD_FIX` findings, run
-   `repair-state.mjs init`. Process them one at a time, highest severity first:
+   `repair-state.mjs init`. Process gate-blocking defects first, then severity:
    a. Invoke `targeted-repairer` with exactly one complete confirmed finding and
       the current accepted snapshot.
    b. If it disputes the finding, cannot reproduce it, or reports uncertainty,
       stop that repair and report the conflict; do not improvise a fix.
    c. Run `verify.sh full`. For a concrete dependency-resolution failure follow
-      dependency-preflight.md's bounded recovery, then rerun. Other failures stop.
+      dependency-preflight.md's bounded recovery, then rerun. Missing generated
+      outputs follow gate-failure.md. A failed repair still stops acceptance.
       Never weaken a gate or perform repeated installation attempts.
    d. Run `repair-state.mjs candidate <finding-id>` and capture
       `BASE_SNAPSHOT` and `CANDIDATE_SNAPSHOT`.
@@ -118,5 +124,5 @@ validation.configuration.exclusions in the final report; CI-only is not passed.
 Pass outputs directly between agents through your context. Never ask the user to
 copy findings from one command into another or to approve a routine continuation.
 Interrupt only for an actual product decision, unsafe/failing repair, stale state,
-failed deterministic evidence after dependency preflight, or exhaustion of the bounded automatic continuation
+unresolved external prerequisites, or exhaustion of the bounded automatic continuation
 allowance. Unavailable same-agent resume is not a reason to interrupt.

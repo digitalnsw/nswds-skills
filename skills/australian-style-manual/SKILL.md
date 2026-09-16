@@ -42,6 +42,7 @@ Preserve facts, amounts, eligibility criteria, deadlines, obligations and qualif
 
 Protect material whose exact form matters:
 
+- Sentence case does not mean lowercasing every word after the first. Preserve the established casing of acronyms and initialisms in headings, labels, metadata and body text: `URL`, `URLs`, `API`, `HTML`, `CSS`, `NSW` and `WCAG` remain capitalised. For example, use ‘Enter a URL’, not ‘Enter a url’ or ‘Enter a Url’. Check unfamiliar shortened forms against the manual or an authoritative source; some have established lowercase or mixed-case forms. Do not change a code identifier such as `url` to match prose casing.
 - Preserve the wording of quotations, official names and legally prescribed text; check the applicable conventions around them and flag issues within protected text. Preserve the identity and words of published titles while applying the manual's specific capitalisation, italics and reference-formatting rules. Do not treat a title as ordinary prose or exempt it from those rules.
 - Do not translate or anglicise personal names or Aboriginal and Torres Strait Islander language words. Respect people's stated names, pronouns and terminology preferences.
 - Preserve URLs, file paths, code identifiers, commands, API fields, localisation keys, placeholders and machine-readable values. Edit human-readable values without changing their contracts or escaping.

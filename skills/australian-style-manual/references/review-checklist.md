@@ -46,6 +46,7 @@ Use this map during an assessment. Open the relevant official guidance before ap
 
 Use these cases to check editorial judgement, not as automatic replacement rules:
 
+- Change ‘Enter A URL’ to ‘Enter a URL’, and ‘API Response URLs’ to ‘API response URLs’. Preserve `URL`, `URLs`, `API`, `HTML`, `CSS`, `NSW` and `WCAG` wherever sentence case is applied. Preserve established exceptions such as ‘radar’ and ‘Qantas’; do not uppercase every shortened form indiscriminately. See [acronyms and initialisms](https://www.stylemanual.gov.au/grammar-punctuation-and-conventions/shortened-words-and-phrases/acronyms-and-initialisms).
 - Change ‘September 16th, 2026’ to ‘16 September 2026’ in ordinary body text. Keep an ISO timestamp in a data field intact.
 - Change a generic heading ‘Application Requirements’ to ‘Application requirements’. For a named publication, preserve its words and identity but consult the specific title and referencing rules before changing capitalisation or formatting; website names and titles of works can follow different conventions.
 - Improve ‘Click here’ using the verified destination, for example ‘Read the application guide’. Do not change the destination just to match invented link text.

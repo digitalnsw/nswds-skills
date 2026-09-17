@@ -1,6 +1,0 @@
-{
-  "name": "claude-code-quality-review",
-  "version": "1.0.0",
-  "description": "Fast stateless branch review, selected repair, and final verification",
-  "author": { "name": "Digital NSW" }
-}

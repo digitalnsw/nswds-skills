@@ -1,4 +1,0 @@
-interface:
-  display_name: "Final code review"
-  short_description: "Run real gates once and make a merge assessment"
-  default_prompt: "Use $codex-final-review for one final validation and code review of this branch."

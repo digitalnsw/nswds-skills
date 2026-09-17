@@ -284,19 +284,16 @@ ignore:
   # repo-specific
 
 # ── repo-specific: Snyk Code excludes ────────────────────────────────────
-# The workflow/eval packages here are installable dev/CI tooling. Snyk Code
-# flags 45 findings in their scripts — 5 MEDIUM Indirect Command Injection and
-# 40 LOW Path Traversal — all the same shape: a command-line ARGUMENT, or a
-# path/argv read from an operator-supplied plan or report file, flows into
-# node:child_process or node:fs. In every case the input is trusted operator/CI
+# The eval runner here is dev/CI tooling. Snyk Code flags its scripts for
+# Indirect Command Injection and Path Traversal, all the same shape: a
+# command-line ARGUMENT, or a path/argv read from an operator-supplied file,
+# flows into node:child_process or node:fs. The input is trusted operator/CI
 # input to a locally-run tool, not an untrusted-input boundary, and the invoker
-# already has full filesystem access. The command-injection cases all pass a
-# validated argv array to spawn/spawnSync with shell:false (the default), so no
-# shell is ever invoked; recover-build.mjs additionally guards each output path
-# against repo escape and symlink traversal (safeOutput()). Excluded rather than
-# `ignore`d because .snyk finding-level ignores are not honoured for Snyk Code
-# in this org — path exclude is the working in-repo mechanism (as in
-# nswds-email-framework).
+# already has full filesystem access. Commands are passed as a validated argv
+# array to spawn/spawnSync with shell:false (the default), so no shell is ever
+# invoked. Excluded rather than `ignore`d because .snyk finding-level ignores
+# are not honoured for Snyk Code in this org — path exclude is the working
+# in-repo mechanism (as in nswds-email-framework).
 #
 # Listed as EXACT FILES, not `scripts/**` trees: a new script, or a new finding
 # in a script that is clean today, still surfaces instead of being pre-silenced.
@@ -304,21 +301,3 @@ ignore:
 exclude:
   code:
     - skills/australian-style-manual/evals/run.mjs
-    - skills/claude-code-quality-workflow/scripts/init-test.mjs
-    - skills/claude-code-quality-workflow/scripts/install-global.mjs
-    - skills/claude-code-quality-workflow/.claude/quality-workflow/scripts/prepare-review.mjs
-    - skills/claude-code-quality-workflow/.claude/quality-workflow/scripts/quality-init.mjs
-    - skills/claude-code-quality-workflow/.claude/quality-workflow/scripts/recover-build.mjs
-    - skills/claude-code-quality-workflow/.claude/quality-workflow/scripts/render-report.mjs
-    - skills/claude-code-quality-workflow/.claude/quality-workflow/scripts/repair-state.mjs
-    - skills/claude-code-quality-workflow/.claude/quality-workflow/scripts/validate-findings.mjs
-    - skills/codex-quality-workflow/scripts/fake-codex.mjs
-    - skills/codex-quality-workflow/scripts/init-test.mjs
-    - skills/codex-quality-workflow/scripts/install.mjs
-    - skills/codex-quality-workflow/skills/codex-quality-workflow/scripts/prepare-review.mjs
-    - skills/codex-quality-workflow/skills/codex-quality-workflow/scripts/quality-init.mjs
-    - skills/codex-quality-workflow/skills/codex-quality-workflow/scripts/recover-build.mjs
-    - skills/codex-quality-workflow/skills/codex-quality-workflow/scripts/render-report.mjs
-    - skills/codex-quality-workflow/skills/codex-quality-workflow/scripts/repair-state.mjs
-    - skills/codex-quality-workflow/skills/codex-quality-workflow/scripts/run-lane.mjs
-    - skills/codex-quality-workflow/skills/codex-quality-workflow/scripts/validate-findings.mjs

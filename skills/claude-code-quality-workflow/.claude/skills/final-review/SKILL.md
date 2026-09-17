@@ -1,15 +1,49 @@
 ---
 name: final-review
-description: Run the repository's merge-equivalent validation once and perform a final read-only review of the current branch.
-argument-hint: "[optional base branch]"
+description: Read-only review of the current branch after repairs. Confirms whether each previously reported finding is actually resolved, looks for regressions introduced by the repairs, and reviews the whole branch once more. Never edits files and never repairs what it finds.
+argument-hint: "[base branch, or what to focus on]"
 disable-model-invocation: true
-context: fork
-agent: quality-reviewer
-background: false
+model: sonnet
+effort: medium
+allowed-tools: Read, Grep, Glob, Bash(node ${CLAUDE_SKILL_DIR}/../quality-review/scripts/*), Bash(git diff *), Bash(git log *), Bash(git show *), Bash(git status *), Bash(git grep *), Bash(git ls-files *), Bash(git blame *)
+disallowed-tools: Edit, Write, NotebookEdit, Agent, Task, AskUserQuestion, EnterPlanMode
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: node "__QUALITY_REVIEW_DIR__/scripts/report-lint.mjs" --hook --final
+          once: true
+          timeout: 30
 ---
 
-Run `quality-review/scripts/review-scope.mjs`, passing `$ARGUMENTS` only when supplied. Infer the repository's real merge gates from CI workflows, package scripts, task configuration, and contribution docs. Prefer the exact gate commands over generic guesses.
+Review the current branch now, after repairs, and end this turn with the finished report. This command is read-only: do not create, edit, format, stage, commit, stash or delete anything, do not delegate to other agents, and do not repair anything you find. Repairs belong to `/fix-review`, which the user runs separately.
 
-Run the applicable gate set once. Automatically use an available port when browser tests support one; never stop another project's server without permission. A failed gate does not erase the review: diagnose it, continue read-only inspection where safe, and report the failure prominently.
+!`node ${CLAUDE_SKILL_DIR}/../quality-review/scripts/review-scope.mjs --skill "$ARGUMENTS"`
 
-Perform one fresh review of the current scope using `quality-review/review-guide.md`. Return a Markdown merge assessment with findings first, exact commands and results, cached or skipped checks, and CI-only gaps. Do not repair, persist state, or claim local checks prove hosted CI.
+The output above is the review scope followed by the review guide. If it is missing, run `node ${CLAUDE_SKILL_DIR}/../quality-review/scripts/review-scope.mjs --skill` yourself to get both. Never ask the user for a branch or a commit unless the scope says no base could be established.
+
+Follow the guide's method for the whole branch as it stands now, with two additions.
+
+1. **Finding resolution.** Take the findings from the earlier `/quality-review` report and the `/fix-review` summary in this conversation. For each one, open the location as it is now and decide from the code, not from the repair summary: **Resolved** (the trigger no longer produces the consequence), **Partly resolved**, **Not resolved**, or **Not attempted**. A finding the repair summary calls fixed is only Resolved when you have confirmed it. When this conversation holds no earlier findings, say so in that section and review the branch as it stands.
+2. **Regressions.** Read the repair itself (`git diff HEAD` when it is uncommitted, otherwise the commits after the first review) and check that it changed nothing beyond the selected findings, broke no caller, and that any test it added would fail without the repair.
+
+Report new defects as findings under the guide's finding bar. An unresolved earlier finding is reported again under its original number rather than as a new one.
+
+Use the guide's report format with the title `# Final review: <branch>` and this section between Findings and Coverage:
+
+```markdown
+## Finding resolution
+
+| Finding | Status | Evidence |
+| --- | --- | --- |
+| F1 · <title> | Resolved | `path:line` now <what it does>; `<check>` passed |
+```
+
+Run the repository's cheap checks once, as the guide describes. State plainly which merge gates were not reproduced locally; a local pass is not a claim that hosted CI will pass.
+
+Helper commands:
+
+- Closing fingerprint (run once, immediately before writing the report): `node ${CLAUDE_SKILL_DIR}/../quality-review/scripts/review-scope.mjs --fingerprint`
+- Free port when the usual one is taken: `node ${CLAUDE_SKILL_DIR}/../quality-review/scripts/free-port.mjs 3000`
+
+Completion contract: the final answer is the Markdown report, with either at least one finding or the exact words `No actionable findings`, the Finding resolution section, and a Coverage section that accounts for every changed production file. A failed or unavailable check or a shortage of time is a coverage gap, never a reason to stop, apologise, describe a plan or ask whether to continue. A completion check reads the final answer and sends it back if it is anything other than the report.

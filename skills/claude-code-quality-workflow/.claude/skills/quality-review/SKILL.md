@@ -1,15 +1,32 @@
 ---
 name: quality-review
-description: Review the current branch and working tree for concrete defects without editing it. Use for a fast Copilot-style code review.
-argument-hint: "[optional base branch]"
+description: Read-only review of the whole current branch against its automatically detected base. Returns a Markdown report of concrete, actionable defects, or "No actionable findings", with a coverage table. Never edits files.
+argument-hint: "[base branch, or what to focus on]"
 disable-model-invocation: true
-context: fork
-agent: quality-reviewer
-background: false
+model: sonnet
+effort: medium
+allowed-tools: Read, Grep, Glob, Bash(node ${CLAUDE_SKILL_DIR}/scripts/*), Bash(git diff *), Bash(git log *), Bash(git show *), Bash(git status *), Bash(git grep *), Bash(git ls-files *), Bash(git blame *)
+disallowed-tools: Edit, Write, NotebookEdit, Agent, Task, AskUserQuestion, EnterPlanMode
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: node "__QUALITY_REVIEW_DIR__/scripts/report-lint.mjs" --hook
+          once: true
+          timeout: 30
 ---
 
-Run the active Claude configuration directory's `quality-review/scripts/review-scope.mjs`, passing `$ARGUMENTS` only when the user supplied a base branch. Use the detected branch and merge base; do not ask the user for a commit SHA.
+Review the current branch now, in this conversation, and end this turn with the finished report. This command is read-only: do not create, edit, format, stage, commit, stash or delete anything, and do not delegate to other agents.
 
-Review that scope now. Start with the diff, then inspect only the repository context needed to verify changed behavior, contracts, consumers, tests, security boundaries, and delivery plumbing. Run fast, non-mutating deterministic checks when they materially help; do not make a full test suite a prerequisite to reviewing.
+!`node ${CLAUDE_SKILL_DIR}/scripts/review-scope.mjs --skill "$ARGUMENTS"`
 
-Return the Markdown format from `quality-review/review-guide.md`. Do not edit files, create evidence directories, persist state, or ask whether stale workflow state should be resumed. If HEAD changes, review the current state afresh.
+The output above is the review scope followed by the review guide. If it is missing, run `node ${CLAUDE_SKILL_DIR}/scripts/review-scope.mjs --skill` yourself to get both. The base is already chosen: never ask the user for a branch or a commit unless the scope says no base could be established.
+
+Helper commands:
+
+- Closing fingerprint (run once, immediately before writing the report): `node ${CLAUDE_SKILL_DIR}/scripts/review-scope.mjs --fingerprint`
+- Free port when the usual one is taken: `node ${CLAUDE_SKILL_DIR}/scripts/free-port.mjs 3000`
+
+Completion contract: the final answer is the Markdown report from the guide, with either at least one finding or the exact words `No actionable findings`, and a Coverage section that accounts for every changed production file. A failed or unavailable check, a large diff, or a shortage of time are reasons to record a coverage gap, never reasons to stop, apologise, describe a plan or ask whether to continue. A completion check reads the final answer and sends it back if it is anything other than the report.
+
+End the report with one line: `Next: /fix-review F1 F2 …` naming the findings worth repairing, or nothing when there are none.

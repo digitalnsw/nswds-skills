@@ -1,0 +1,200 @@
+#!/usr/bin/env node
+// Checks that a review command ended with a completed Markdown review rather
+// than JSON, an apology, a status update or a promise.
+//
+//   report-lint.mjs [--final] [--repo <dir>] < report.md   lint a report from stdin
+//   report-lint.mjs --hook [--final]                  Stop-hook mode (hook JSON on stdin)
+//
+// Hook mode blocks the stop (exit 2, reasons on stderr) so the model rewrites
+// its answer. Every rewrite is checked again, and a turn is blocked at most
+// MAX_BLOCKS times, counted from the session transcript, so it can never trap.
+import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { BRANCH_TOKEN, fingerprint, mustAccountFor, reviewScope } from "./review-scope.mjs";
+
+const FORBIDDEN = [
+  [/\b(sorry|apologi[sz]e|apologies|you(?:'|’)re right|you are right|my mistake)\b/i, "apology"],
+  [/\bI(?:(?:'|’)ll| will| shall|(?:'|’)m going to| am going to|(?:'|’)m (?:now )?(?:re)?(?:opening|reading|reviewing|checking|running)| am (?:now )?(?:re)?(?:opening|reading|reviewing|checking|running))\b/i, "future-tense promise or progress narration"],
+  [/\b(say the word|shall I|should I (?:continue|resume|proceed|go on)|would you like me to|do you want me to|want me to (?:continue|resume|proceed)|let me know (?:if|when|whether) you(?:(?:'|’)d| would)? (?:like|want)|I can (?:continue|resume|pick up))\b/i, "request to manage the review's internal process"],
+  [/\b(to be continued|review (?:is )?(?:still )?in progress|still (?:reviewing|working|running)|ran out of (?:turns|time|context)|hit (?:the|my) (?:turn|tool|context) limit)\b/i, "unfinished review"]
+];
+const SEVERITIES = /\b(blocker|high|medium|low)\b/i;
+const FIELDS = [
+  [/\*\*Location:?\*\*:?\s*`?[^\s`]+:\d+/i, "a **Location:** with `path:line`"],
+  [/\*\*Confidence:?\*\*/i, "**Confidence:**"],
+  [/\*\*Trigger:?\*\*/i, "**Trigger:**"],
+  [/\*\*Consequence:?\*\*/i, "**Consequence:**"],
+  [/\*\*Fix direction:?\*\*/i, "**Fix direction:**"]
+];
+
+const MAX_BLOCKS = 2;
+const BLOCK_MARKER = "The review is not complete.";
+
+// Coverage is read from its table rows only, as whole path tokens: a mention in
+// a check command, or a longer path that merely contains this one, does not count.
+function coveredPaths(coverage) {
+  const rows = coverage.split("\n").filter((line) => /^\s*\|/.test(line));
+  const tokens = new Set();
+  for (const row of rows) {
+    for (const quoted of row.matchAll(/`([^`]+)`/g)) tokens.add(quoted[1].trim());
+    for (const token of row.split(/[\s`|,()[\]]+/)) if (token) tokens.add(token.replace(/[.;:]+$/, ""));
+  }
+  return (path) => {
+    if (tokens.has(path)) return true;
+    const parts = path.split("/");
+    for (let depth = parts.length - 1; depth > 0; depth -= 1) {
+      const directory = parts.slice(0, depth).join("/");
+      if (tokens.has(`${directory}/**`) || tokens.has(`${directory}/*`)) return true;
+    }
+    return false;
+  };
+}
+
+// The last 4MB of the transcript, as lines, most recent first. Null when the
+// path is missing or unreadable, so callers can tell "no transcript" apart
+// from "read it and found nothing".
+function tailLines(transcriptPath) {
+  if (typeof transcriptPath !== "string" || !transcriptPath.endsWith(".jsonl")) return null;
+  let descriptor;
+  try {
+    descriptor = openSync(transcriptPath, "r");
+    const size = fstatSync(descriptor).size;
+    const length = Math.min(size, 4 * 1024 * 1024);
+    const buffer = Buffer.alloc(length);
+    readSync(descriptor, buffer, 0, length, size - length);
+    return buffer.toString("utf8").split("\n").reverse();
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+// How many times this hook has already blocked the current turn: its feedback
+// entries in the transcript since the last prompt the user typed. Null when the
+// transcript cannot be read.
+export function priorBlocks(transcriptPath) {
+  const lines = tailLines(transcriptPath);
+  if (lines === null) return null;
+  let count = 0;
+  for (const line of lines) {
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (entry?.type !== "user") continue;
+    const content = entry.message?.content;
+    const text = typeof content === "string" ? content : "";
+    if (entry.isMeta) { if (text.startsWith("Stop hook feedback") && text.includes(BLOCK_MARKER)) count += 1; continue; }
+    if (typeof content === "string") break; // the prompt that started this turn
+  }
+  return count;
+}
+
+// The base-branch argument the operator actually passed to the command, read
+// from the prompt that started this turn rather than from the report: the
+// harness writes that prompt before the model runs, so unlike the report's own
+// **Base:** line, the model cannot use it to claim a different, narrower scope
+// than the one it was actually shown. "" when there is no transcript, no such
+// prompt, or the argument is not a bare branch/ref token.
+export function commandArgument(transcriptPath) {
+  const lines = tailLines(transcriptPath);
+  if (lines === null) return "";
+  for (const line of lines) {
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (entry?.type !== "user" || entry.isMeta) continue;
+    const content = entry.message?.content;
+    if (typeof content !== "string") continue;
+    const argument = /User's argument for this review \(may be empty\):[ \t]*([^\n]*)/.exec(content)?.[1]?.trim() ?? "";
+    return BRANCH_TOKEN.test(argument) ? argument : "";
+  }
+  return "";
+}
+
+function prose(markdown) {
+  return markdown.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]*`/g, " ").replace(/^>.*$/gm, " ");
+}
+
+export function lintReport(report, { final = false, scope = null, currentFingerprint = "" } = {}) {
+  const problems = [];
+  const text = report.trim();
+  if (!text) return ["The answer is empty. Write the review report."];
+
+  const unfenced = text.replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, "$1").trim();
+  if (/^[{[]/.test(unfenced)) {
+    try { JSON.parse(unfenced); problems.push("The answer is JSON. Write the report as Markdown for a human reader."); } catch { /* not JSON */ }
+  }
+
+  if (!/^#{1,3}\s+\S/.test(text)) problems.push("The answer does not begin with the report title (`# Quality review: <branch>`). Remove everything before it: no preamble, narration or note about what happens next.");
+
+  const findings = [...text.matchAll(/^###\s+F-?\d+\b.*$/gm)];
+  const clean = /\bNo actionable findings\b/.test(text);
+  if (findings.length === 0 && !clean) problems.push("The answer has neither a finding (`### F1 · <Severity> · <title>`) nor the exact phrase `No actionable findings`. A review must end in one of those two outcomes.");
+  if (findings.length > 0 && clean) problems.push("The answer reports findings and also says `No actionable findings`. Keep one outcome.");
+
+  findings.forEach((match, index) => {
+    const end = index + 1 < findings.length ? findings[index + 1].index : text.search(/^##\s+Coverage\b/m) > match.index ? text.search(/^##\s+Coverage\b/m) : text.length;
+    const block = text.slice(match.index, end);
+    const id = match[0].replace(/^###\s+/, "").slice(0, 60);
+    if (!SEVERITIES.test(match[0])) problems.push(`Finding "${id}" has no severity (Blocker, High, Medium or Low) in its heading.`);
+    for (const [pattern, label] of FIELDS) if (!pattern.test(block)) problems.push(`Finding "${id}" is missing ${label}.`);
+  });
+
+  const coverageAt = text.search(/^##\s+Coverage\b/m);
+  if (coverageAt === -1) problems.push("There is no `## Coverage` section.");
+  if (!/merge base/i.test(text)) problems.push("The report does not state the base branch and merge base.");
+  if (final && !/^##\s+Finding resolution\b/m.test(text)) problems.push("There is no `## Finding resolution` section.");
+
+  for (const [pattern, label] of FORBIDDEN) {
+    const hit = pattern.exec(prose(text));
+    if (hit) problems.push(`The answer contains ${label} ("${hit[0]}"). Report only what was reviewed and found; state anything unreviewed as a coverage gap.`);
+  }
+
+  if (scope?.files && coverageAt !== -1) {
+    const covers = coveredPaths(text.slice(coverageAt));
+    const missing = scope.files.filter(mustAccountFor).map((file) => file.path).filter((path) => !covers(path));
+    if (missing.length) problems.push(`The Coverage section does not account for these changed files (production files, and files with substantial removals): ${missing.slice(0, 15).join(", ")}${missing.length > 15 ? ` and ${missing.length - 15} more` : ""}. Give each a row in the Coverage table, as assessed or as an unverified gap with the reason; deleted files need a row saying what was searched for. A directory may be one row written as \`dir/**\`.`);
+  }
+  if (currentFingerprint && !text.includes(currentFingerprint)) {
+    problems.push(`The Coverage section does not record the closing worktree fingerprint (${currentFingerprint}). State whether it matches the opening fingerprint from the review scope.`);
+  }
+  return problems;
+}
+
+function repositoryFacts(cwd, transcriptPath) {
+  try {
+    const requested = commandArgument(transcriptPath);
+    let scope;
+    try { scope = reviewScope({ requested, cwd, usePullRequest: false }); } catch { scope = reviewScope({ cwd, usePullRequest: false }); }
+    return { scope: scope.base ? scope : null, currentFingerprint: fingerprint(scope.root) };
+  } catch {
+    return {};
+  }
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const args = process.argv.slice(2);
+  const final = args.includes("--final");
+  if (args.includes("--hook")) {
+    try {
+      const input = JSON.parse(readFileSync(0, "utf8"));
+      const report = String(input.last_assistant_message ?? "");
+      const problems = lintReport(report, { final, ...repositoryFacts(input.cwd || process.cwd(), input.transcript_path) });
+      if (problems.length === 0) process.exit(0);
+      if (input.stop_hook_active) {
+        // A retry implies at least one recorded block; zero means the transcript is behind, so stop counting on it.
+        const blocks = priorBlocks(input.transcript_path);
+        if (!blocks || blocks >= MAX_BLOCKS) process.exit(0);
+      }
+      console.error(`${BLOCK_MARKER} Do not explain, apologise or describe what comes next: reply with the full corrected Markdown review report and nothing else. If something could not be reviewed, list it under Coverage as a gap.\n- ${problems.join("\n- ")}`);
+      process.exit(2);
+    } catch {
+      process.exit(0); // A broken hook must never trap the session.
+    }
+  }
+  const repoAt = args.indexOf("--repo");
+  const repo = repoAt === -1 ? "" : args[repoAt + 1];
+  const report = readFileSync(0, "utf8");
+  const problems = lintReport(report, { final, ...(repo ? repositoryFacts(repo) : {}) });
+  if (problems.length) { console.error(problems.map((problem) => `- ${problem}`).join("\n")); process.exit(1); }
+  console.log("report-lint: ok");
+}

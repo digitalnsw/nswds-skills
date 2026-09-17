@@ -1,4 +1,0 @@
-interface:
-  display_name: "Fix review findings"
-  short_description: "Repair only findings you explicitly select"
-  default_prompt: "Use $codex-fix-review to repair the review findings I select, validate them once, and leave the changes uncommitted."

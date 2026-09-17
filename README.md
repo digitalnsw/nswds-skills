@@ -3,7 +3,7 @@
 A collection of agent skills for product development workflows, maintained by Digital NSW. It contains two kinds of entry:
 
 - **Skills** — self-contained instruction sets an AI coding agent (Claude Code, Cursor, Copilot, and others) loads when its trigger conditions match.
-- **Workflow packages** — agent-specific review tools with their own installers.
+- **Workflow packages** — tools built for one specific agent, with their own installer.
 
 ## Install
 
@@ -23,11 +23,11 @@ npx skills add digitalnsw/nswds-skills --skill dependency-update-review
 
 ### Workflow packages
 
-Install a workflow package with its own installer, not `npx skills add`. Preview the changes with `--dry-run` first:
+Install a workflow package with its own installer, not `npx skills add`, which does not run installers. Preview the changes with `--dry-run` first:
 
 ```bash
 git clone https://github.com/digitalnsw/nswds-skills.git
-cd nswds-skills/skills/claude-code-quality-workflow   # or skills/codex-quality-workflow
+cd nswds-skills/skills/claude-code-quality-workflow
 ./install.sh --dry-run
 ./install.sh
 ```
@@ -46,14 +46,11 @@ cd nswds-skills/skills/claude-code-quality-workflow   # or skills/codex-quality-
 
 ## Workflow packages
 
-Both packages implement the same small, stateless workflow: review the current branch without editing, repair only findings the user selects, then run merge-equivalent gates and one final review. Reports are Markdown. Repairs remain uncommitted, and neither package pushes changes.
-
 | Package | Agent | What it does |
 | --- | --- | --- |
-| [claude-code-quality-workflow](skills/claude-code-quality-workflow/README.md) | Claude Code | Installs `/quality-review`, `/fix-review`, and `/final-review`. It uses one read-only reviewer, automatic base-branch detection, selected repairs, and one repair-diff check. It installs no hooks and changes no global `CLAUDE.md`. |
-| [codex-quality-workflow](skills/codex-quality-workflow/README.md) | Codex | Installs `$codex-quality-review`, `$codex-fix-review`, and `$codex-final-review`. The current task reviews directly instead of launching several overlapping CLI workers. |
+| [claude-code-quality-workflow](skills/claude-code-quality-workflow/README.md) | Claude Code | Installs three global commands. `/quality-review` reviews the whole branch against an automatically detected base and returns a Markdown report of concrete defects with a coverage table, without editing anything. `/fix-review` repairs only the findings you select. `/final-review` confirms from the code whether they are resolved and looks for regressions. One reviewer, one turn per command, no saved state and no per-repository setup. |
 
-Both need Git and Node.js 18 or newer. Each package's README covers installation and usage, and each ships `scripts/self-test.mjs`. Neither stores workflow state in the repository.
+The package needs Git, Node.js 18 or later and Claude Code 2.1.218 or later. Its README covers installation, use, the model it runs on and its limits.
 
 ## Layout
 
@@ -68,16 +65,17 @@ Workflow packages are self-contained directories:
 
 ```
 skills/<package>/README.md    # requirements, configuration and usage
-skills/<package>/install.sh   # installer (supports --dry-run and --target)
-skills/<package>/scripts/     # installer implementation and self-test
+skills/<package>/install.sh   # installer (supports --dry-run, --uninstall and --target)
+skills/<package>/scripts/     # installer implementation
+skills/<package>/test/        # automated tests
 ```
 
-The package's skills and small deterministic helpers sit under `.claude/` (Claude Code) or `skills/` (Codex) inside the package directory.
+The package's commands and their small deterministic helpers sit under `.claude/skills/` inside the package directory.
 
 ## Contributing
 
 Skills in this collection are deliberately tool-agnostic and org-agnostic: they must not reference specific repositories, organisations, or machines. Supporting material lives in the skill's `references/` directory and is linked from the SKILL.md.
 
-Workflow packages target one agent by design, but are held to the same org-agnostic rule. Each carries its own README, installer and self-test.
+Workflow packages target one agent by design, but are held to the same org-agnostic rule. Each carries its own README, installer and tests.
 
 The Australian Style Manual skill includes [opt-in behavioural evaluations](skills/australian-style-manual/evals/README.md) for assessment-only and editing requests, with checks for protected content and unintended file changes.

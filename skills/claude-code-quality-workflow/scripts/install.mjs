@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -14,6 +14,31 @@ for (let index = 0; index < args.length; index += 1) {
   else if (args[index] === "--target" && args[index + 1]) target = resolve(args[++index]);
   else throw new Error("usage: install.sh [--dry-run] [--target <claude-config-directory>]");
 }
+
+function lstatIfPresent(path) {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function assertNoSymlinkComponents(path, boundary = target) {
+  const resolvedBoundary = resolve(boundary);
+  let cursor = resolve(path);
+  const fromBoundary = relative(resolvedBoundary, cursor);
+  if (fromBoundary === ".." || fromBoundary.startsWith(`..${sep}`) || isAbsolute(fromBoundary)) {
+    throw new Error(`destination escapes installation boundary: ${cursor}`);
+  }
+  for (;;) {
+    if (lstatIfPresent(cursor)?.isSymbolicLink()) throw new Error(`refusing symbolic-link destination: ${cursor}`);
+    if (cursor === resolvedBoundary) return;
+    cursor = dirname(cursor);
+  }
+}
+
+assertNoSymlinkComponents(target);
 
 const sourceRoots = [
   [join(root, ".claude", "agents"), join(target, "agents")],
@@ -39,6 +64,7 @@ function inventory(source, destination) {
 for (const pair of sourceRoots) inventory(...pair);
 
 function removePath(path, label = "removing") {
+  assertNoSymlinkComponents(path);
   if (!existsSync(path) || scheduledRemovals.has(path)) return;
   scheduledRemovals.add(path);
   console.log(`${dryRun ? "would remove" : label}: ${path}`);
@@ -46,10 +72,26 @@ function removePath(path, label = "removing") {
 }
 
 const oldManifest = join(target, "quality-workflow", "install-manifest.json");
+assertNoSymlinkComponents(oldManifest);
 if (existsSync(oldManifest)) {
   try {
     const parsed = JSON.parse(readFileSync(oldManifest, "utf8"));
-    for (const rel of parsed.files ?? []) if (!current.has(rel)) removePath(join(target, rel));
+    if (!Array.isArray(parsed.files)) throw new Error("manifest files must be an array");
+    for (const rel of parsed.files) {
+      try {
+        if (typeof rel !== "string" || rel.length === 0 || isAbsolute(rel) || normalize(rel) !== rel) {
+          throw new Error("entry must be a non-empty normalized relative path");
+        }
+        const destination = resolve(target, rel);
+        const fromTarget = relative(target, destination);
+        if (!fromTarget || fromTarget === ".." || fromTarget.startsWith(`..${sep}`) || isAbsolute(fromTarget)) {
+          throw new Error("entry escapes the installation target");
+        }
+        if (!current.has(rel)) removePath(destination);
+      } catch (error) {
+        console.warn(`warning: skipping invalid legacy manifest entry ${JSON.stringify(rel)}: ${error.message}`);
+      }
+    }
   } catch {
     console.warn(`warning: could not read legacy manifest: ${oldManifest}`);
   }
@@ -68,6 +110,9 @@ const settingsPath = join(target, "settings.json");
 if (existsSync(settingsPath) && !lstatSync(settingsPath).isSymbolicLink()) {
   try {
     const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+    const legacyHookCommands = new Set(["quick-check.sh", "verify-on-stop.sh"].map((name) =>
+      `"${join(target, "quality-workflow", "scripts", name)}"`.replaceAll("\\", "/")
+    ));
     let changed = false;
     for (const event of ["PostToolUse", "Stop"]) {
       if (!Array.isArray(settings.hooks?.[event])) continue;
@@ -75,7 +120,7 @@ if (existsSync(settingsPath) && !lstatSync(settingsPath).isSymbolicLink()) {
       for (const group of settings.hooks[event]) {
         if (!Array.isArray(group?.hooks)) { groups.push(group); continue; }
         const hooks = group.hooks.filter((hook) => {
-          const legacy = typeof hook?.command === "string" && hook.command.replaceAll("\\", "/").includes("/quality-workflow/scripts/");
+          const legacy = typeof hook?.command === "string" && legacyHookCommands.has(hook.command.replaceAll("\\", "/"));
           if (legacy) changed = true;
           return !legacy;
         });
@@ -105,11 +150,7 @@ if (existsSync(claudeMdPath) && !lstatSync(claudeMdPath).isSymbolicLink()) {
 
 function digest(path) { return createHash("sha256").update(readFileSync(path)).digest("hex"); }
 for (const { src, dest } of files) {
-  let cursor = dest;
-  while (cursor.startsWith(target) && cursor !== target) {
-    if (existsSync(cursor) && lstatSync(cursor).isSymbolicLink()) throw new Error(`refusing symlink destination: ${cursor}`);
-    cursor = dirname(cursor);
-  }
+  assertNoSymlinkComponents(dest);
   if (existsSync(dest) && statSync(dest).isFile() && digest(src) === digest(dest)) continue;
   console.log(`${dryRun ? "would install" : "installing"}: ${dest}`);
   if (!dryRun) { mkdirSync(dirname(dest), { recursive: true }); cpSync(src, dest); }
@@ -117,6 +158,7 @@ for (const { src, dest } of files) {
 
 if (!dryRun) {
   const manifest = join(target, "quality-review", "install-manifest.json");
+  assertNoSymlinkComponents(manifest);
   mkdirSync(dirname(manifest), { recursive: true });
   writeFileSync(manifest, `${JSON.stringify({ version: "1.0.0", files: [...current].sort() }, null, 2)}\n`);
 }

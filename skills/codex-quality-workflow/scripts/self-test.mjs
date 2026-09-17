@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,11 @@ function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, encoding: "utf8" });
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed:\n${result.stderr || result.stdout}`);
   return result.stdout;
+}
+function runExpectingFailure(command, args, cwd) {
+  const result = spawnSync(command, args, { cwd, encoding: "utf8" });
+  if (result.status === 0) throw new Error(`${command} ${args.join(" ")} unexpectedly succeeded`);
+  return `${result.stdout}${result.stderr}`;
 }
 const temp = mkdtempSync(join(tmpdir(), "codex-quality-review-"));
 const repo = join(temp, "repo");
@@ -43,4 +48,13 @@ if (existsSync(join(temp, "agents", "quality-workflow-backups"))) throw new Erro
 for (const name of ["codex-quality-review", "codex-fix-review", "codex-final-review"]) {
   if (!existsSync(join(target, name, "SKILL.md"))) throw new Error(`missing installed skill ${name}`);
 }
+
+const symlinkReferent = join(temp, "symlink-referent");
+const symlinkTarget = join(temp, "symlink-target");
+mkdirSync(symlinkReferent);
+writeFileSync(join(symlinkReferent, "sentinel.txt"), "keep\n");
+symlinkSync(symlinkReferent, symlinkTarget, "dir");
+const symlinkFailure = runExpectingFailure("node", [join(root, "scripts/install.mjs"), "--target", symlinkTarget], root);
+if (!symlinkFailure.includes("symbolic-link destination")) throw new Error("symlinked target failed for the wrong reason");
+if (!existsSync(join(symlinkReferent, "sentinel.txt")) || existsSync(join(symlinkReferent, "codex-quality-review"))) throw new Error("symlinked target referent was modified");
 console.log("Codex quality review self-test passed");

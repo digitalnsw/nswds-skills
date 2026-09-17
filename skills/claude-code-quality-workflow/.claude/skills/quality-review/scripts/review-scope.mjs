@@ -46,7 +46,9 @@ export function selectBase({ requested = "", cwd = process.cwd(), usePullRequest
   if (requested) {
     const ref = resolves(requested, cwd) ? requested : preferRemote(requested);
     if (!ref) throw new Error(`base branch does not resolve locally: ${requested}`);
-    return { ref, reason: "named explicitly", ...distance(ref, cwd) };
+    const measured = distance(ref, cwd);
+    if (!measured) throw new Error(`base branch shares no history with HEAD: ${requested}`);
+    return { ref, reason: "named explicitly", ...measured };
   }
 
   const recorded = current ? git(["config", "--get", `branch.${current}.gh-merge-base`], { optional: true, cwd }) : "";
@@ -92,7 +94,7 @@ const DOCS = /\.(mdx?|rst|adoc|txt)$|(^|\/)(docs?|documentation)\/|(^|\/)(LICEN[
 // A modified file that lost this many lines must be accounted for in the
 // report whatever its kind: silent loss hides in documentation, tests and CI.
 const SUBSTANTIAL_REMOVAL = 20;
-export const mustAccountFor = (file) => file.status !== "D" && file.kind !== "generated" && (file.kind === "production" || (file.status === "M" && file.removed >= SUBSTANTIAL_REMOVAL));
+export const mustAccountFor = (file) => file.kind === "production" || (file.kind !== "generated" && file.status === "M" && file.removed >= SUBSTANTIAL_REMOVAL);
 
 // Headings, definitions, tests and CI steps that a file lost and did not get
 // back: evidence of what a large removal actually took out.
@@ -117,6 +119,9 @@ export function classify(path) {
   return "production";
 }
 
+// Logical lines: the text after the last newline counts when it is not empty.
+export const countLines = (text) => (text === "" ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0));
+
 function changedFiles(mergeBase, cwd) {
   const files = new Map();
   const record = (path, status, added = 0, removed = 0, committed = true) => {
@@ -125,6 +130,7 @@ function changedFiles(mergeBase, cwd) {
     entry.removed += removed;
     if (!committed) entry.uncommitted = true;
     if (status === "D" || !files.has(path)) entry.status = status;
+    else if (entry.status === "D") entry.status = "M";
     files.set(path, entry);
   };
   const parse = (range, committed) => {
@@ -151,7 +157,7 @@ function changedFiles(mergeBase, cwd) {
   parse(["HEAD"], false);
   for (const path of git(["ls-files", "--others", "--exclude-standard", "-z"], { cwd }).split("\0").filter(Boolean)) {
     let lines = 0;
-    try { lines = readFileSync(join(cwd, path), "utf8").split("\n").length - 1; } catch { /* unreadable: leave the count at zero */ }
+    try { lines = countLines(readFileSync(join(cwd, path), "utf8")); } catch { /* unreadable: leave the count at zero */ }
     record(path, "A", lines, 0, false);
   }
   return [...files.values()].map((file) => ({ ...file, kind: classify(file.path) })).sort((a, b) => a.path.localeCompare(b.path))
@@ -163,6 +169,9 @@ const EXPENSIVE = /(e2e|playwright|cypress|browser|storybook|visual|a11y|lightho
 
 const BROWSER = /\b(playwright|cypress|puppeteer|webdriver|storybook|lighthouse)\b/i;
 
+// POSIX single-quoting, applied only when a path has anything beyond plain characters.
+export const shellQuote = (value) => (/^[\w./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`);
+
 function packageChecks(directory, root) {
   const manifest = join(root, directory, "package.json");
   if (!existsSync(manifest)) return null;
@@ -170,8 +179,10 @@ function packageChecks(directory, root) {
   try { scripts = JSON.parse(readFileSync(manifest, "utf8")).scripts ?? {}; } catch { return null; }
   const at = (name) => existsSync(join(root, directory, name)) || existsSync(join(root, name));
   const runner = at("pnpm-lock.yaml") ? "pnpm" : at("yarn.lock") ? "yarn" : at("bun.lockb") || at("bun.lock") ? "bun" : "npm";
-  const prefix = directory ? `(cd ${directory} && ` : "";
-  const suffix = directory ? ")" : "";
+  // npm takes the directory as a flag, which keeps the command a plain `npm run …`
+  // that a permission rule can match; the other runners need a subshell.
+  const prefix = directory && runner !== "npm" ? `(cd ${shellQuote(directory)} && ` : "";
+  const suffix = !directory ? "" : runner === "npm" ? ` --prefix ${shellQuote(directory)}` : ")";
   const commands = Object.keys(scripts).map((name) => ({
     command: `${prefix}${runner} run ${name}${suffix}`,
     definition: String(scripts[name]).slice(0, 140),
@@ -187,7 +198,7 @@ function ciChecks(root) {
   const entries = [];
   for (const name of readdirSync(directory).filter((file) => /\.ya?ml$/.test(file)).sort()) {
     const lines = readFileSync(join(directory, name), "utf8").split("\n");
-    const triggers = /(^|\n)\s*(on:[^\n]*pull_request|pull_request(_target)?:|-\s*pull_request)/.test(lines.join("\n"));
+    const triggers = /(^|\n)\s*(["']?on["']?\s*:[^\n]*pull_request|["']?pull_request(_target)?["']?\s*:|-\s*["']?pull_request)/.test(lines.join("\n"));
     if (!triggers) continue;
     const runs = [];
     const reusable = [];
@@ -245,6 +256,8 @@ function fetchAge(root, ref) {
   } catch { return null; }
 }
 
+const PACKAGE_LIMIT = 6; // bounds the prompt; anything beyond it is reported, not dropped
+
 export function reviewScope({ requested = "", cwd = process.cwd(), usePullRequest = true } = {}) {
   const root = git(["rev-parse", "--show-toplevel"], { cwd });
   const head = git(["rev-parse", "HEAD"], { cwd: root });
@@ -258,9 +271,10 @@ export function reviewScope({ requested = "", cwd = process.cwd(), usePullReques
       if (existsSync(join(root, directory, "package.json"))) { directories.add(directory); break; }
     }
   }
-  const packages = [...directories].slice(0, 6).map((directory) => packageChecks(directory, root)).filter(Boolean);
+  const packages = [...directories].slice(0, PACKAGE_LIMIT).map((directory) => packageChecks(directory, root)).filter(Boolean);
+  const omittedPackages = [...directories].slice(PACKAGE_LIMIT);
   return {
-    root, head, branch, base, files, packages,
+    root, head, branch, base, files, packages, omittedPackages,
     ci: ciChecks(root), other: otherChecks(root),
     commits: Number(git(["rev-list", "--count", `${base.mergeBase}..HEAD`], { cwd: root })),
     subjects: git(["log", "--format=%s", "--max-count=30", `${base.mergeBase}..HEAD`], { cwd: root }).split("\n").filter(Boolean),
@@ -309,6 +323,10 @@ function render(scope) {
     for (const entry of pkg.commands) out.push(`- ${entry.cost}: \`${entry.command}\` → ${entry.definition}`);
     out.push("");
   }
+  if (scope.omittedPackages.length) {
+    any = true;
+    out.push(`### Packages not listed (${scope.omittedPackages.length})`, `Checks are listed for the first ${PACKAGE_LIMIT} changed packages only. Record these as a coverage gap, or read their package.json when a finding depends on them: ${scope.omittedPackages.map((directory) => `\`${directory}\``).join(", ")}`, "");
+  }
   if (scope.other.length) { any = true; out.push("### Other toolchains", ...scope.other.map((command) => `- \`${command}\``), ""); }
   for (const entry of scope.ci) {
     any = true;
@@ -335,19 +353,22 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     } else {
       let requested = positional[0]?.trim() ?? "";
       let note = "";
+      let unusable = "";
       if (skill && requested && !/^[\w./-]+$/.test(requested)) { note = requested; requested = ""; }
       let scope;
       try {
         scope = reviewScope({ requested });
       } catch (error) {
         if (!skill || !requested) throw error;
-        note = requested;
+        if (/shares no history/.test(error.message)) unusable = error.message;
+        else note = requested;
         scope = reviewScope();
       }
       if (!scope.base) {
         console.log("# Review scope\n\nNo base branch could be established: this repository has no remote default branch and no local main, master, trunk or develop branch. Say so in one sentence and ask which branch this work will merge into. This is the only situation in which the review may stop without a report.");
         if (!skill) process.exit(3);
       } else console.log(flags.includes("--json") ? JSON.stringify(scope, null, 2) : render(scope));
+      if (unusable && scope.base) console.log(`\n## Base override not used\n\nThe requested ${unusable}. The base above was detected automatically instead; say so under Base selection.`);
       if (note && scope.base) console.log(`\n## User's instruction for this review\n\n${note}\n\n(It did not name a branch, so the base was detected automatically.)`);
     }
   } catch (error) {

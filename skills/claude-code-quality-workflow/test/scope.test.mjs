@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { join } from "node:path";
 import { makeRepo, ok, run, scripts, tempDir, write } from "./helpers.mjs";
+import { countLines, shellQuote } from "../.claude/skills/quality-review/scripts/review-scope.mjs";
 
 const scopeScript = join(scripts, "review-scope.mjs");
 const scope = (repo, ...args) => JSON.parse(ok("node", [scopeScript, "--json", ...args], { cwd: repo }));
@@ -97,6 +98,10 @@ test("discovers repository-defined checks and marks what it cannot run", () => {
     base: {
       "package.json": JSON.stringify({ scripts: { lint: "eslint .", test: "node --test", "test:e2e": "playwright test", build: "tsc -b", start: "node ." } }),
       ".github/workflows/ci.yml": "on:\n  pull_request:\njobs:\n  a:\n    steps:\n      - run: npm run lint\n      - run: |\n          npm ci\n          npm test\n  b:\n    uses: org/repo/.github/workflows/gate.yml@v1\n",
+      ".github/workflows/local.yml": "on:\n  pull_request:\njobs:\n  gate:\n    uses: ./.github/workflows/gate.yml\n",
+      ".github/workflows/quoted-list.yml": "\"on\": [push, pull_request]\njobs:\n  a:\n    steps:\n      - run: npm run lint\n",
+      ".github/workflows/quoted-scalar.yml": "'on': pull_request\njobs:\n  a:\n    steps:\n      - run: npm test\n",
+      ".github/workflows/quoted-map.yml": "'on':\n  'pull_request':\n    branches: [main]\njobs:\n  a:\n    steps:\n      - run: npm test\n",
       ".github/workflows/release.yml": "on:\n  push:\njobs:\n  a:\n    steps:\n      - run: npm publish\n"
     },
     feature: { "src/a.js": "1\n" }
@@ -105,7 +110,8 @@ test("discovers repository-defined checks and marks what it cannot run", () => {
   const costs = Object.fromEntries(result.packages[0].commands.map((entry) => [entry.command, entry.cost]));
   assert.deepEqual(costs, { "npm run lint": "cheap", "npm run test": "cheap", "npm run test:e2e": "expensive", "npm run build": "expensive" });
   assert.equal(result.packages[0].installed, false);
-  assert.deepEqual(result.ci.map((entry) => entry.workflow), [".github/workflows/ci.yml"]);
+  assert.deepEqual(result.ci.map((entry) => entry.workflow), ["ci", "local", "quoted-list", "quoted-map", "quoted-scalar"].map((name) => `.github/workflows/${name}.yml`));
+  assert.deepEqual(result.ci[1].reusable, ["./.github/workflows/gate.yml"]);
   assert.deepEqual(result.ci[0].runs, ["npm run lint", "npm ci", "npm test"]);
   assert.deepEqual(result.ci[0].reusable, ["org/repo/.github/workflows/gate.yml@v1"]);
   const rendered = ok("node", [scopeScript], { cwd: repo });
@@ -183,4 +189,57 @@ test("warns when the remote base has not been fetched recently", async () => {
   utimesSync(join(repo, ".git", "FETCH_HEAD"), old, old);
   assert.equal(scope(repo).fetchedDaysAgo, 5);
   assert.match(ok("node", [scopeScript], { cwd: repo }), /Base freshness: origin\/main was last fetched 5 days ago/);
+});
+
+test("package directories from the branch are quoted in suggested commands", () => {
+  const hostile = "pkgs/my app $(id) `x` it's";
+  const { repo } = makeRepo({ base: { "a.js": "1\n" }, feature: {
+    [`${hostile}/package.json`]: JSON.stringify({ scripts: { test: "node --test" } }), [`${hostile}/src/x.js`]: "1\n",
+    "pkgs/plain/package.json": JSON.stringify({ scripts: { lint: "eslint ." } }), "pkgs/plain/x.js": "1\n",
+    "pkgs/yarned/package.json": JSON.stringify({ scripts: { test: "jest" } }), "pkgs/yarned/yarn.lock": "", "pkgs/yarned/a b/x.js": "1\n"
+  } });
+  const commands = scope(repo).packages.flatMap((entry) => entry.commands.map((command) => command.command));
+  assert.deepEqual(commands.sort(), [
+    "(cd pkgs/yarned && yarn run test)",
+    "npm run lint --prefix pkgs/plain",
+    "npm run test --prefix 'pkgs/my app $(id) `x` it'\\''s'"
+  ]);
+  assert.equal(ok("sh", ["-c", `printf %s ${shellQuote(hostile)}`]), hostile);
+});
+
+test("counts logical lines in untracked files", () => {
+  assert.deepEqual(["", "x", "x\n", "x\ny", "x\ny\n"].map(countLines), [0, 1, 1, 2, 2]);
+  const { repo } = makeRepo({ base: { "a.js": "1\n" } });
+  write(repo, { "one.js": "x" });
+  assert.equal(scope(repo).files.find((file) => file.path === "one.js").added, 1);
+});
+
+test("a file deleted on the branch and recreated in the worktree is live, not deleted", () => {
+  const { repo, git } = makeRepo({ base: { "src/a.js": "old\n" } });
+  git("rm", "-q", "src/a.js"); git("commit", "-q", "-m", "delete");
+  write(repo, { "src/a.js": "recreated\n" });
+  const file = scope(repo).files.find((entry) => entry.path === "src/a.js");
+  assert.deepEqual([file.status, file.uncommitted], ["M", true]);
+  assert.match(ok("node", [scopeScript], { cwd: repo }), /- src\/a\.js \[M /);
+});
+
+test("a named base with no shared history is refused, and skill mode says why it fell back", () => {
+  const { repo, git } = makeRepo({ base: { "a.js": "1\n" }, feature: { "a.js": "2\n" } });
+  git("checkout", "-q", "--orphan", "island"); git("commit", "-q", "--allow-empty", "-m", "island"); git("checkout", "-q", "-f", "feature");
+  const strict = run("node", [scopeScript, "island"], { cwd: repo });
+  assert.equal(strict.status, 1);
+  assert.match(strict.stderr, /base branch shares no history with HEAD: island/);
+  const skill = ok("node", [scopeScript, "--skill", "island"], { cwd: repo });
+  assert.match(skill, /Base: main/);
+  assert.match(skill, /## Base override not used[\s\S]*shares no history with HEAD: island/);
+  assert.doesNotMatch(skill, /did not name a branch/);
+});
+
+test("packages beyond the listing cap are named as a gap", () => {
+  const feature = Object.fromEntries(Array.from({ length: 8 }, (_, index) => [[`p${index}/package.json`, JSON.stringify({ scripts: { test: "node --test" } })], [`p${index}/x.js`, "1\n"]]).flat());
+  const { repo } = makeRepo({ base: { "a.js": "1\n" }, feature });
+  const result = scope(repo);
+  assert.equal(result.packages.length + result.omittedPackages.length, 8);
+  assert.deepEqual(result.omittedPackages, ["p5", "p6", "p7"]);
+  assert.match(ok("node", [scopeScript], { cwd: repo }), /### Packages not listed \(3\)[\s\S]*`p5`, `p6`, `p7`/);
 });

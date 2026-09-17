@@ -5,13 +5,14 @@ argument-hint: "[base branch, or what to focus on]"
 disable-model-invocation: true
 model: sonnet
 effort: medium
-allowed-tools: Read, Grep, Glob, Bash(node ${CLAUDE_SKILL_DIR}/scripts/*), Bash(git diff *), Bash(git log *), Bash(git show *), Bash(git status *), Bash(git grep *), Bash(git ls-files *), Bash(git blame *)
+allowed-tools: Read, Grep, Glob, Bash(node ${CLAUDE_SKILL_DIR}/scripts/*), Bash(git diff *), Bash(git log *), Bash(git show *), Bash(git status *), Bash(git grep *), Bash(git ls-files *), Bash(git blame *), Bash(npm run *), Bash(npm test*), Bash(pnpm run *), Bash(pnpm test*), Bash(yarn run *), Bash(yarn test*), Bash(bun run *), Bash(bun test*), Bash(node --test*), Bash(make lint*), Bash(make test*), Bash(make check*), Bash(make typecheck*), Bash(make validate*), Bash(make verify*), Bash(cargo check*), Bash(cargo test*), Bash(go vet*), Bash(go test*), Bash(pytest*)
 disallowed-tools: Edit, Write, NotebookEdit, Agent, Task, AskUserQuestion, EnterPlanMode
 hooks:
   Stop:
     - hooks:
         - type: command
-          command: node "__QUALITY_REVIEW_DIR__/scripts/report-lint.mjs" --hook
+          command: node
+          args: ["__QUALITY_REVIEW_DIR__/scripts/report-lint.mjs", "--hook"]
           once: true
           timeout: 30
 ---

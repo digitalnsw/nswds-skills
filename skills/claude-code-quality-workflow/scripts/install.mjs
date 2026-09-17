@@ -75,6 +75,7 @@ const reviewDirectory = join(target, "skills", "quality-review");
 const manifestPath = join(reviewDirectory, ".install-manifest.json");
 const backupRoot = join(target, "backups", "quality-review");
 
+const HOOK_SCRIPT = "__QUALITY_REVIEW_DIR__/scripts/report-lint.mjs";
 const wanted = new Map();
 (function collect(directory) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -84,13 +85,24 @@ const wanted = new Map();
     if (!entry.isFile()) continue;
     let content = readFileSync(source);
     if (entry.name.endsWith(".md")) {
-      let text = content.toString("utf8").replaceAll("__QUALITY_REVIEW_DIR__", reviewDirectory.replaceAll("\\", "/"));
+      // The hook runs in exec form, so its script path is one JSON-encoded argument
+      // (JSON is valid YAML) and no shell ever parses the installation path.
+      let text = content.toString("utf8").replaceAll(`"${HOOK_SCRIPT}"`, JSON.stringify(join(reviewDirectory, "scripts", "report-lint.mjs")));
+      if (text.includes("__QUALITY_REVIEW_DIR__")) throw new Error(`unrendered placeholder in ${source}`);
       if (model) text = text.replace(/^model: .*$/m, `model: ${model}`);
       content = Buffer.from(text);
     }
     wanted.set(join("skills", relative(skillsSource, source)), content);
   }
 })(skillsSource);
+
+// Refuse before changing anything when something other than a file is in the way.
+for (const rel of uninstall ? [] : wanted.keys()) {
+  const destination = join(target, rel);
+  assertSafe(destination);
+  const stat = lstatIfPresent(destination);
+  if (stat && !stat.isFile()) throw new Error(`cannot install: ${destination} exists and is not a regular file. Move it aside and run the installer again; nothing was changed.`);
+}
 
 // Files this package put there earlier. `owned` maps a path to the hash that was
 // installed (null when an older manifest recorded the path without a hash).
@@ -138,9 +150,16 @@ if (uninstall) {
     const stat = lstatIfPresent(destination);
     if (stat?.isFile() && digest(readFileSync(destination)) === digest(content)) continue;
     if (stat && !untouched(rel)) {
-      let backup = join(backupRoot, rel);
-      for (let count = 1; existsSync(backup) && digest(readFileSync(backup)) !== digest(readFileSync(destination)); count += 1) backup = `${join(backupRoot, rel)}.${count}`;
-      assertSafe(backup);
+      // Reuse a backup with the same content; step past anything else already at that name.
+      const current = digest(readFileSync(destination));
+      let backup = "";
+      for (let count = 0; !backup; count += 1) {
+        const candidate = count ? `${join(backupRoot, rel)}.${count}` : join(backupRoot, rel);
+        const taken = lstatIfPresent(candidate);
+        if (taken && (!taken.isFile() || digest(readFileSync(candidate)) !== current)) continue;
+        assertSafe(candidate);
+        backup = candidate;
+      }
       backedUp.push(backup);
       if (!dryRun) { mkdirSync(dirname(backup), { recursive: true }); writeFileSync(backup, readFileSync(destination)); }
     }

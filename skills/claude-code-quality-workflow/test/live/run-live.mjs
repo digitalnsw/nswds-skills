@@ -31,8 +31,9 @@ if (/would (install|update|remove)/.test(stale)) {
 }
 
 function claude(repo, prompt, { resume = "", edits = false, label }) {
-  const cli = ["-p", prompt, "--output-format", "json", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
-    "--allowedTools", "Bash(npm run *)", "Bash(npm test*)", "Bash(node --test*)"];
+  // No extra permissions: the review commands must be able to run the
+  // repository's checks with what their own frontmatter pre-approves.
+  const cli = ["-p", prompt, "--output-format", "json", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'];
   const debugLog = join(out, `${label}.debug.log`);
   cli.push("--debug-file", debugLog);
   if (edits) cli.push("--permission-mode", "acceptEdits");
@@ -111,6 +112,7 @@ function defectScenario() {
   const rename = findingAbout(review.text, /formatCurrency/);
   check("defect: reports the 1-based pagination defect at src/paginate.js with a line", pagination, "no finding cites src/paginate.js:<line>");
   check("defect: traces the renamed export to its unchanged consumer src/report.js", rename && /report\.js/.test(review.text));
+  check("defect: ran the repository's checks with only the command's own permissions", /npm (run )?test[^\n]*(fail|pass)/i.test(review.text) && /npm run lint[^\n]*(fail|pass)/i.test(review.text), "the report does not show npm test and npm run lint results");
   check("defect: a failing lint check did not replace the implementation review", pagination && rename && /lint/i.test(review.text));
   check("defect: the unavailable typecheck is recorded, not fatal", /typecheck/i.test(review.text) && /tsc|not (run|installed|available|found)/i.test(review.text));
   const coverageSection = review.text.slice(review.text.search(/^## Coverage/m));
@@ -176,7 +178,8 @@ hooks:
   Stop:
     - hooks:
         - type: command
-          command: node "${join(scripts, "report-lint.mjs")}" --hook
+          command: node
+          args: [${JSON.stringify(join(scripts, "report-lint.mjs"))}, "--hook"]
           once: true
           timeout: 30
 ---

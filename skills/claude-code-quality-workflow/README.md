@@ -77,12 +77,13 @@ The report states the base, the merge base and the reason. When candidates disag
 
 The command starts by building a change-surface inventory from the diff: production files, configuration and CI, tests, documentation, and generated files. Skill, agent and prompt files count as production. The reviewer reads every changed production file in full, then the callers, consumers, tests and configuration needed to judge the consequences.
 
-The report's Coverage table lists every changed production file as assessed or as a named gap, along with any other modified file that lost 20 or more lines, because unintended removals hide in documentation, tests and CI. A finding is reported only with a location, a trigger, a consequence, a fix direction, a severity and a confidence.
+The report's Coverage table lists every changed production file, including deleted ones, as assessed or as a named gap, along with any other modified file that lost 20 or more lines, because unintended removals hide in documentation, tests and CI. A finding is reported only with a location, a trigger, a consequence, a fix direction, a severity and a confidence.
 
 ### Checks
 
 The review uses the commands the repository already defines: `package.json` scripts, Makefile targets, and the `run:` steps of pull-request workflows. It runs the cheap ones (lint, type check, unit tests) and leaves browser, end-to-end and build suites alone unless the change concerns them.
 
+- The review commands pre-approve the usual script runners for their own turn (`npm`, `pnpm`, `yarn` and `bun` `run`/`test`, `node --test`, `make lint|test|check|typecheck|validate|verify`, `cargo check|test`, `go vet|test`, `pytest`), so checks run without a permission prompt. Those scripts come from the branch under review and run with your permissions. That suits your own branches; before reviewing a branch you do not trust, read its scripts first.
 - It never installs dependencies or changes configuration.
 - A check that fails or cannot run is recorded as evidence or as a gap. The code review carries on.
 - When a port is in use, it picks a free one with `scripts/free-port.mjs` instead of stopping.
@@ -91,7 +92,7 @@ The review uses the commands the repository already defines: `package.json` scri
 ### How the commands are kept honest
 
 - **Read-only.** `/quality-review` and `/final-review` remove the `Edit`, `Write`, `NotebookEdit`, `Agent` and `AskUserQuestion` tools for their turn. The report records a worktree fingerprint from the start and the end of the review.
-- **Completion.** A `Stop` hook runs `scripts/report-lint.mjs` on the final answer. If the answer is JSON, an apology, a status update or a promise, or lacks an outcome, a coverage section, a field in a finding, or a changed production file, the hook sends it back once with the reasons. The hook removes itself after the report passes, and never blocks twice in a row.
+- **Completion.** A `Stop` hook runs `scripts/report-lint.mjs` on the final answer. If the answer is JSON, an apology, a status update or a promise, or lacks an outcome, a coverage section, a field in a finding, or a changed production file, the hook sends it back with the reasons. Each rewrite is checked again. A turn is blocked at most twice, counted from the session transcript, and once only if the transcript cannot be read. The hook runs in exec form, so no shell parses its path, and it removes itself after its first successful run.
 
 ## Model and cost
 

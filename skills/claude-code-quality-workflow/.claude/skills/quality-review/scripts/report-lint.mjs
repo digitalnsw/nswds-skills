@@ -5,9 +5,10 @@
 //   report-lint.mjs [--final] [--repo <dir>] < report.md   lint a report from stdin
 //   report-lint.mjs --hook [--final]                  Stop-hook mode (hook JSON on stdin)
 //
-// Hook mode blocks the stop once (exit 2, reasons on stderr) so the model
-// rewrites its answer, and never blocks twice in a row.
-import { readFileSync } from "node:fs";
+// Hook mode blocks the stop (exit 2, reasons on stderr) so the model rewrites
+// its answer. Every rewrite is checked again, and a turn is blocked at most
+// MAX_BLOCKS times, counted from the session transcript, so it can never trap.
+import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { fingerprint, mustAccountFor, reviewScope } from "./review-scope.mjs";
 
@@ -25,6 +26,59 @@ const FIELDS = [
   [/\*\*Consequence:?\*\*/i, "**Consequence:**"],
   [/\*\*Fix direction:?\*\*/i, "**Fix direction:**"]
 ];
+
+const MAX_BLOCKS = 2;
+const BLOCK_MARKER = "The review is not complete.";
+
+// Coverage is read from its table rows only, as whole path tokens: a mention in
+// a check command, or a longer path that merely contains this one, does not count.
+function coveredPaths(coverage) {
+  const rows = coverage.split("\n").filter((line) => /^\s*\|/.test(line));
+  const tokens = new Set();
+  for (const row of rows) {
+    for (const quoted of row.matchAll(/`([^`]+)`/g)) tokens.add(quoted[1].trim());
+    for (const token of row.split(/[\s`|,()[\]]+/)) if (token) tokens.add(token.replace(/[.;:]+$/, ""));
+  }
+  return (path) => {
+    if (tokens.has(path)) return true;
+    const parts = path.split("/");
+    for (let depth = parts.length - 1; depth > 0; depth -= 1) {
+      const directory = parts.slice(0, depth).join("/");
+      if (tokens.has(`${directory}/**`) || tokens.has(`${directory}/*`)) return true;
+    }
+    return false;
+  };
+}
+
+// How many times this hook has already blocked the current turn: its feedback
+// entries in the transcript since the last prompt the user typed. Null when the
+// transcript cannot be read.
+export function priorBlocks(transcriptPath) {
+  if (typeof transcriptPath !== "string" || !transcriptPath.endsWith(".jsonl")) return null;
+  let descriptor;
+  try {
+    descriptor = openSync(transcriptPath, "r");
+    const size = fstatSync(descriptor).size;
+    const length = Math.min(size, 4 * 1024 * 1024);
+    const buffer = Buffer.alloc(length);
+    readSync(descriptor, buffer, 0, length, size - length);
+    let count = 0;
+    for (const line of buffer.toString("utf8").split("\n").reverse()) {
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      if (entry?.type !== "user") continue;
+      const content = entry.message?.content;
+      const text = typeof content === "string" ? content : "";
+      if (entry.isMeta) { if (text.startsWith("Stop hook feedback") && text.includes(BLOCK_MARKER)) count += 1; continue; }
+      if (typeof content === "string") break; // the prompt that started this turn
+    }
+    return count;
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
 
 function prose(markdown) {
   return markdown.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]*`/g, " ").replace(/^>.*$/gm, " ");
@@ -66,17 +120,9 @@ export function lintReport(report, { final = false, scope = null, currentFingerp
   }
 
   if (scope?.files && coverageAt !== -1) {
-    const coverage = text.slice(coverageAt);
-    const missing = scope.files.filter(mustAccountFor).map((file) => file.path).filter((path) => {
-      if (coverage.includes(path)) return false;
-      const parts = path.split("/");
-      for (let depth = parts.length - 1; depth > 0; depth -= 1) {
-        const directory = parts.slice(0, depth).join("/");
-        if (coverage.includes(`${directory}/**`) || coverage.includes(`${directory}/*`)) return false;
-      }
-      return true;
-    });
-    if (missing.length) problems.push(`The Coverage section does not account for these changed files (production files, and files with substantial removals): ${missing.slice(0, 15).join(", ")}${missing.length > 15 ? ` and ${missing.length - 15} more` : ""}. List each as assessed, or as an unverified gap with the reason. A directory may be written as \`dir/**\`.`);
+    const covers = coveredPaths(text.slice(coverageAt));
+    const missing = scope.files.filter(mustAccountFor).map((file) => file.path).filter((path) => !covers(path));
+    if (missing.length) problems.push(`The Coverage section does not account for these changed files (production files, and files with substantial removals): ${missing.slice(0, 15).join(", ")}${missing.length > 15 ? ` and ${missing.length - 15} more` : ""}. Give each a row in the Coverage table, as assessed or as an unverified gap with the reason; deleted files need a row saying what was searched for. A directory may be one row written as \`dir/**\`.`);
   }
   if (currentFingerprint && !text.includes(currentFingerprint)) {
     problems.push(`The Coverage section does not record the closing worktree fingerprint (${currentFingerprint}). State whether it matches the opening fingerprint from the review scope.`);
@@ -101,11 +147,15 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   if (args.includes("--hook")) {
     try {
       const input = JSON.parse(readFileSync(0, "utf8"));
-      if (input.stop_hook_active) process.exit(0);
       const report = String(input.last_assistant_message ?? "");
       const problems = lintReport(report, { final, ...repositoryFacts(report, input.cwd || process.cwd()) });
       if (problems.length === 0) process.exit(0);
-      console.error(`The review is not complete. Do not explain, apologise or describe what comes next: reply with the full corrected Markdown review report and nothing else. If something could not be reviewed, list it under Coverage as a gap.\n- ${problems.join("\n- ")}`);
+      if (input.stop_hook_active) {
+        // A retry implies at least one recorded block; zero means the transcript is behind, so stop counting on it.
+        const blocks = priorBlocks(input.transcript_path);
+        if (!blocks || blocks >= MAX_BLOCKS) process.exit(0);
+      }
+      console.error(`${BLOCK_MARKER} Do not explain, apologise or describe what comes next: reply with the full corrected Markdown review report and nothing else. If something could not be reviewed, list it under Coverage as a gap.\n- ${problems.join("\n- ")}`);
       process.exit(2);
     } catch {
       process.exit(0); // A broken hook must never trap the session.

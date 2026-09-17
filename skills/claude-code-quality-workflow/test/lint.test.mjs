@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { join } from "node:path";
-import { makeRepo, ok, run, scripts } from "./helpers.mjs";
-import { lintReport } from "../.claude/skills/quality-review/scripts/report-lint.mjs";
+import { makeRepo, ok, run, scripts, tempDir } from "./helpers.mjs";
+import { writeFileSync } from "node:fs";
+import { lintReport, priorBlocks } from "../.claude/skills/quality-review/scripts/report-lint.mjs";
 
 const lintScript = join(scripts, "report-lint.mjs");
 const finding = `### F1 · High · Discount is applied twice
@@ -97,8 +98,9 @@ test("requires every changed production file to be assessed or named as a gap", 
   const problems = lintReport(clean, { scope });
   assert.equal(problems.length, 1);
   assert.match(problems[0], /src\/cart\/total\.js, src\/cart\/tax\.js/);
-  assert.doesNotMatch(problems[0], /gone|price/);
-  assert.deepEqual(lintReport(clean.replace("## Coverage", "## Coverage\n\n| `src/cart/**` | Gap | not read: out of time |"), { scope }), []);
+  assert.match(problems[0], /src\/gone\.js/); // a deleted production file needs its reference search recorded
+  assert.doesNotMatch(problems[0], /price|package-lock/);
+  assert.deepEqual(lintReport(clean.replace("## Coverage", "## Coverage\n\n| `src/cart/**` | Gap | not read: out of time |\n| `src/gone.js` [deleted] | Assessed | no importer left |"), { scope }), []);
   const mentionedOnlyInFindings = withFinding.replace("src/price.js:12-15", "src/cart/total.js:3");
   assert.equal(lintReport(mentionedOnlyInFindings, { scope }).length, 1);
 });
@@ -130,4 +132,44 @@ test("rejects narration before the report title", () => {
   const problems = lintReport(`Fingerprint unchanged. Now writing the report.\n\n${clean}`);
   assert.equal(problems.length, 1);
   assert.match(problems[0], /does not begin with the report title/);
+});
+
+test("a path counts as covered only as a whole token in a Coverage table row", () => {
+  const scope = { files: [{ path: "src/a.js", kind: "production", status: "M" }] };
+  const withRow = (row) => clean.replace("| `src/price.js` | Assessed | behaviour, callers |", row);
+  for (const row of ["| `src/a.js.bak` | Assessed | x |", "| `lib/src/a.js` | Assessed | x |", "| `src/a.jsx` | Assessed | x |", "| `other/**` | Assessed | x |", "| `src/a.js/**` | Assessed | x |"]) {
+    assert.equal(lintReport(withRow(row), { scope }).length, 1, row);
+  }
+  assert.equal(lintReport(withRow("| `src/x.js` | Assessed | x |").replace("`npm test`", "`node src/a.js`"), { scope }).length, 1, "a mention in a check command is not coverage");
+  for (const row of ["| `src/a.js` | Assessed | x |", "| src/a.js | Assessed | x |", "| `src/**` | Assessed | x |", "| `src/*` | Gap | x |", "| `src/b.js`, `src/a.js` | Assessed | x |"]) {
+    assert.deepEqual(lintReport(withRow(row), { scope }), [], row);
+  }
+  const spaced = { files: [{ path: "my app/a b.js", kind: "production", status: "A" }] };
+  assert.deepEqual(lintReport(withRow("| `my app/a b.js` | Assessed | x |"), { scope: spaced }), []);
+});
+
+test("deleted production files must be accounted for, by path or by an ancestor directory row", () => {
+  const scope = { files: [{ path: "old/pkg/scripts/a.mjs", kind: "production", status: "D" }, { path: "old/pkg/README.md", kind: "docs", status: "D" }] };
+  assert.match(lintReport(clean, { scope })[0], /old\/pkg\/scripts\/a\.mjs/);
+  assert.deepEqual(lintReport(clean.replace("## Coverage", "## Coverage\n\n| `old/pkg/**` [deleted, 2 files] | Checked | grepped for old/pkg: no references |"), { scope }), []);
+});
+
+test("as a Stop hook: a rewritten answer is checked again, and a turn is blocked at most twice", () => {
+  const { repo } = makeRepo({ base: { "src/price.js": "1\n" }, feature: { "src/price.js": "2\n" } });
+  const transcript = join(tempDir(), "session.jsonl");
+  const entry = (object) => JSON.stringify(object);
+  const prompt = entry({ type: "user", message: { role: "user", content: "<command-name>/quality-review</command-name>" } });
+  const feedback = entry({ type: "user", isMeta: true, message: { role: "user", content: "Stop hook feedback: [node]: The review is not complete. Do not explain" } });
+  const earlierTurn = [prompt, feedback, feedback, entry({ type: "assistant", message: { content: [{ type: "text", text: "report" }] } })];
+  const hook = (lines, message = "I'm reopening the diff now.") => {
+    writeFileSync(transcript, `${lines.join("\n")}\n`);
+    return run("node", [join(scripts, "report-lint.mjs"), "--hook"], { input: JSON.stringify({ cwd: repo, stop_hook_active: true, transcript_path: transcript, last_assistant_message: message }) }).status;
+  };
+  assert.equal(hook([...earlierTurn, prompt, feedback]), 2, "second invalid answer is blocked again");
+  assert.equal(hook([...earlierTurn, prompt, feedback, feedback]), 0, "third attempt is always allowed");
+  assert.equal(hook([...earlierTurn, prompt]), 0, "a transcript that has not caught up falls back to a single block");
+  assert.equal(priorBlocks(transcript), 0);
+  assert.equal(priorBlocks("/nonexistent/session.jsonl"), null);
+  assert.equal(priorBlocks(join(repo, "src/price.js")), null);
+  assert.equal(run("node", [join(scripts, "report-lint.mjs"), "--hook"], { input: JSON.stringify({ cwd: repo, stop_hook_active: true, last_assistant_message: "I'll continue." }) }).status, 0, "no transcript: never trap");
 });

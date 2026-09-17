@@ -3,7 +3,7 @@
 A collection of agent skills for product development workflows, maintained by Digital NSW. It contains two kinds of entry:
 
 - **Skills** — self-contained instruction sets an AI coding agent (Claude Code, Cursor, Copilot, and others) loads when its trigger conditions match.
-- **Workflow packages** — multi-agent pipelines built for one specific agent, bundling skills with subagents, scripts, schemas and (for Claude Code) hooks. Each ships its own installer.
+- **Workflow packages** — agent-specific review tools with their own installers.
 
 ## Install
 
@@ -23,7 +23,7 @@ npx skills add digitalnsw/nswds-skills --skill dependency-update-review
 
 ### Workflow packages
 
-Install a workflow package with its own installer, not `npx skills add`. `npx skills add` finds the Codex package's two skills but none of the Claude Code package, and it doesn't run the installers, which back up changed files and (for Claude Code) register hooks and a `CLAUDE.md` import. Preview the changes with `--dry-run` first:
+Install a workflow package with its own installer, not `npx skills add`. Preview the changes with `--dry-run` first:
 
 ```bash
 git clone https://github.com/digitalnsw/nswds-skills.git
@@ -46,14 +46,14 @@ cd nswds-skills/skills/claude-code-quality-workflow   # or skills/codex-quality-
 
 ## Workflow packages
 
-Both packages implement the same evidence-driven review-and-repair pipeline. A read-only reviewer reports evidence-backed findings, the parent triages them and requests specialist review only when needed, and a separate repair worker handles coherent batches of one to five related confirmed defects. The parent verifies every batch and an independent reviewer checks the exact repair diff before a provisional checkpoint; full gates and a fresh final review are still required for acceptance. Repairs are left uncommitted — neither package commits or pushes.
+Both packages implement the same small, stateless workflow: review the current branch without editing, repair only findings the user selects, then run merge-equivalent gates and one final review. Reports are Markdown. Repairs remain uncommitted, and neither package pushes changes.
 
 | Package | Agent | What it does |
 | --- | --- | --- |
-| [claude-code-quality-workflow](skills/claude-code-quality-workflow/README.md) | Claude Code | Runs the whole pipeline from one `/quality-workflow` command: freezes the committed implementation, prepares diff, repository context, validation and analyzer evidence, starts a broad read-only review alongside the full gate, then triages, repairs coherent batches and runs a final review. Installs agents, skills and shared scripts under `~/.claude/`, adds an import to `~/.claude/CLAUDE.md`, and merges hooks into `~/.claude/settings.json` that syntax-check after each edit and run the full gate before Claude stops. |
-| [codex-quality-workflow](skills/codex-quality-workflow/README.md) | Codex | Native Codex companion, invoked as `$codex-quality-workflow`. Coordinates independent Codex CLI workers — read-only sandboxes for review, workspace-write for bounded repair batches — and automatically retries partial or malformed review reports. Installs two skills to `~/.agents/skills` without changing Codex configuration. |
+| [claude-code-quality-workflow](skills/claude-code-quality-workflow/README.md) | Claude Code | Installs `/quality-review`, `/fix-review`, and `/final-review`. It uses one read-only reviewer, automatic base-branch detection, selected repairs, and one repair-diff check. It installs no hooks and changes no global `CLAUDE.md`. |
+| [codex-quality-workflow](skills/codex-quality-workflow/README.md) | Codex | Installs `$codex-quality-review`, `$codex-fix-review`, and `$codex-final-review`. The current task reviews directly instead of launching several overlapping CLI workers. |
 
-Both need Git and Node.js 18 or newer. The Claude Code package also needs Claude Code 2.1.218 or newer; the Codex package needs an installed, authenticated Codex CLI. Each package's README covers the remaining requirements, configuration and usage. Each package also ships a self-test: `scripts/self-test.sh` for Claude Code, `scripts/self-test.mjs` for Codex. Don't run both pipelines at once in the same checkout: they share project files but keep separate workflow state.
+Both need Git and Node.js 18 or newer. Each package's README covers installation and usage, and each ships `scripts/self-test.mjs`. Neither stores workflow state in the repository.
 
 ## Layout
 
@@ -72,7 +72,7 @@ skills/<package>/install.sh   # installer (supports --dry-run and --target)
 skills/<package>/scripts/     # installer implementation and self-test
 ```
 
-The package's skills, agents, schemas and runtime scripts sit under `.claude/` (Claude Code) or `skills/` (Codex) inside the package directory.
+The package's skills and small deterministic helpers sit under `.claude/` (Claude Code) or `skills/` (Codex) inside the package directory.
 
 ## Contributing
 

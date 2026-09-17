@@ -1,247 +1,35 @@
-# Claude Code quality workflow
+# Claude Code quality review
 
-A globally installable, evidence-driven pipeline for high-confidence code changes without the unstable
-“review → auto-fix → review the fix forever” loop.
+A small, stateless review toolkit for Claude Code. It installs three explicit commands:
 
-The central invariant is simple:
+- `/quality-review [base branch]` reviews the current branch and working tree without editing it.
+- `/fix-review [finding IDs or description]` repairs only selected findings, runs targeted checks, and independently reviews the repair diff once.
+- `/final-review [base branch]` runs the repository's real merge gates once and performs one final read-only review.
 
-> Reviewers define evidence-backed problems and cannot edit. A separate repair
-> agent implements only a scoped batch of confirmed related findings.
+The reviewer automatically detects the repository's default branch. Pass a branch name only when you want a different comparison. Reports are Markdown written to the conversation, not JSON files.
 
-Version 3 reduces repeated orchestration: one reviewer by default, parent triage,
-coherent repair batches, parent-owned checks and readable reports. Provisional
-checkpoints permit progress; full gates and final review still control acceptance.
-Copilot parity has not been measured or established.
+There is no freeze step, persistent run state, background lane, convergence loop, repository setup, hook, or global `CLAUDE.md` import.
 
-## Install globally
+## Install
 
-Extract the ZIP, enter the folder, and run:
-
-```sh
+```bash
 ./install.sh --dry-run
 ./install.sh
 ```
 
-The installer makes the workflow available in every Claude Code repository. It:
+Use `--target <directory>` to test against another Claude configuration directory. Updating from the former workflow removes its managed agents, skills, hooks, import marker, and runtime directory. The installer does not create backups.
 
-- installs agents to `~/.claude/agents/`;
-- installs commands/skills to `~/.claude/skills/`;
-- installs shared scripts and schemas to `~/.claude/quality-workflow/`;
-- adds an idempotent import block to `~/.claude/CLAUDE.md`;
-- merges hooks into `~/.claude/settings.json` without replacing other settings;
-- backs up changed collisions under
-  `~/.claude/quality-workflow-backups/<timestamp>/`.
-
-Re-running the installer upgrades the same files and does not duplicate imports
-or hooks. `CLAUDE_CONFIG_DIR=/custom/path ./install.sh` changes the config root.
-For safe testing, use `./install.sh --target /tmp/test-claude-config`.
-
-Requirements:
-
-- Git
-- Claude Code 2.1.218 or newer (2.1.267+ recommended)
-- POSIX shell on macOS/Linux/WSL
-- Node.js 18+ for the merge-safe installer and findings validator
-- The tools used by your project's validation commands
-
-Restart Claude Code if this is the first time the global `agents` directory has
-been created. Then run `/doctor`.
-
-You can validate the extracted package before installation with:
-
-```sh
-./scripts/self-test.sh
-```
-
-## Optional project installation
-
-For team-shared configuration, copy `CLAUDE.md` and `.claude/` into a repository
-root. Merge existing files rather than overwriting them. The same skills resolve
-their scripts correctly at project or global scope.
-
-Make scripts executable if an archive or copy tool discarded modes:
-
-```sh
-chmod +x .claude/quality-workflow/scripts/*.sh
-```
-
-With Claude Code installed, the self-test also validates the bundled plugin
-manifest, skills, and agent definitions.
-
-## Configure deterministic validation
-
-The full workflow now performs dependency preflight before validation. Missing npm
-workspace links or stale installed packages trigger one lockfile-preserving restore
-with required host permissions; no upgrades or automatic lifecycle scripts. Source
-and staging state are checked afterwards and validation reruns. Genuine gate
-failures still stop review. Init-only and Stop hooks never install dependencies.
-Other package managers require their own inspected frozen-install procedure.
-
-Just run `/quality-workflow`. Before freezing, Claude inspects the repo's CI,
-workspace scripts and called helpers, creates a local validation plan, and
-continues automatically. `/prepare-review` and `/validate-change full` also onboard
-automatically. Use `/quality-init` for setup alone or `/quality-init refresh` to
-reinspect the gate definitions. Setup alone does not run tests or reviewers.
-
-Generated plans live in Git-local `quality-workflow-init` metadata, not source:
-no untracked config file, commit, or per-repository installation is required.
-CI/manifests and recorded helper changes invalidate the plan so it is refreshed.
-Existing `.claude/quality-workflow/validation.commands` always wins and is never
-overwritten, including when empty. You can still maintain that file for a shared,
-version-controlled team configuration. Global defaults remain a baseline fallback,
-not proof of repository coverage.
-
-Setup does not execute guessed commands or install tools. Claude inspects their
-safety and records commands with provenance; the helper validates and saves the
-plan. CI-only checks remain explicit gaps in the evidence and final report. Local
-validation passing does not prove hosted CI or branch protection passed. Genuine
-missing tools or unclear gates still block setup; failing tests block approval,
-not initial diagnosis. A missing config alone
-no longer asks you to do the setup manually.
-
-## Configure deterministic analysis
-
-`/prepare-review` automatically captures changed-file ESLint output when a local
-ESLint binary exists and Ruff output for changed Python files when Ruff is
-available. Add project-specific analyzers by copying `analysis.commands.example`
-to `.claude/quality-workflow/analysis.commands`.
-
-Each tab-separated line declares `required` or `advisory`, a name, and a command.
-Commands receive the evidence directory, base/head SHAs, and diff path as
-environment variables. This is where to connect CodeQL, Semgrep, Sonar, custom
-architecture checks, or an existing security script. A failing required analyzer
-blocks approval, but safe evidence remains available for initial diagnosis;
-advisory output becomes evidence that reviewers must
-independently verify.
-
-The included hooks:
-
-- run a lightweight syntax check after `Edit` or `Write`;
-- run the full configured gate before Claude stops when tracked or untracked
-  project changes exist;
-- block the stop once on failure and feed the failure back to Claude.
-
-Full validation is serialized per repository. If a run is already active, the
-stop hook waits rather than starting a competing suite, then reuses the result
-only when the repository and validation configuration fingerprints are unchanged.
-Results expire after ten minutes by default. Stale locks are recovered safely.
-
-Set `QUALITY_SKIP_STOP_VERIFY=1` for a session when you deliberately need to stop
-without the full gate. This is an escape hatch, not a normal workflow.
-
-## Daily workflow: one command
-
-Implement the change and commit the intended implementation checkpoint. Then run:
+## Normal use
 
 ```text
-/quality-workflow
+/quality-review
 ```
 
-That command automatically:
+Read the report, then either leave the branch unchanged or approve selected findings:
 
-1. detects and freezes the destination base branch;
-2. runs `/prepare-review` to assemble the diff, expanded context, repository tree,
-   instructions, tests, callers/consumers, PR metadata, quick validation, and
-   analyzer output, while the parent starts the full configured gate alongside review;
-3. sends that evidence to a fresh read-only reviewer;
-4. triages in the parent, using another reviewer only when needed;
-5. groups 1–5 related confirmed findings into each scoped repair batch;
-6. runs affected checks in the parent and independently reviews the batch before
-   a provisional checkpoint;
-7. runs full gates and one fresh final review before final acceptance.
-
-Worker browser restrictions hand verification to the parent, not back to you.
-JSON stays internal. You see readable findings and implemented/verified/reviewed/
-accepted counts. Legacy runs import their existing triage and resume their pending
-repair without reinitialization or repeating completed reviews.
-
-If a reviewer reaches its tool-turn limit, the orchestrator automatically continues
-the lane. It resumes the same context when that runtime feature exists; otherwise
-it starts a fresh, tightly scoped continuation reviewer from the prepared evidence.
-It allows two continuations per lane and never asks you to approve routine
-continuation. Truncated or explicitly partial reports cannot enter triage and
-cannot produce a clean or merge-ready result. Only repeated exhaustion stops the
-pipeline as an incomplete review.
-
-You do not copy and paste findings between commands. The workflow stops only when
-it needs a real product decision, finds a stale or unsafe state, rejects a repair,
-or exhausts safe diagnosis/recovery of a failed gate. After repair validation
-fails, it automatically investigates the cause before deciding whether the repair
-regressed, the environment needs recovery, or a separate defect needs repair.
-It never retries assertions until green or weakens checks. Repairs remain uncommitted for your inspection;
-the workflow never commits or pushes.
-
-Usually the base is detected automatically. In repositories that merge to a
-nonstandard branch, use `/quality-workflow develop`. This is a branch name—not a
-commit SHA—and means “the branch this work will merge into.”
-
-The component commands (`/freeze-review`, `/prepare-review`, `/quality-review`,
-`/triage-findings`, `/repair-review-finding`, `/repair-diff-review`, and
-`/final-review`) remain available for debugging or deliberately manual control.
-`/quality-review` and `/final-review` prepare their own evidence, so even manual
-review no longer requires hand-feeding context.
-
-## Review depth
-
-`/quality-workflow` defaults to one senior reviewer across all nine passes. Add
-specialists for a concrete high-risk domain or explicitly exhaustive request,
-not just because the diff touches both code and tests:
-
-- `contract-reviewer`: claimed behavior, consumers, compatibility, release contract
-- `behavior-reviewer`: input domains, unmasked behavior, generated output
-- `gate-reviewer`: test strength, CI guard coverage, build/cache/publish plumbing
-
-The orchestrator unions their findings, deduplicates only identical defects, and
-triages the union without asking you to relay anything. Parallel review raises
-recall but also raises false-positive volume, so every finding must still pass the
-evidence gate.
-
-The broad reviewer and orchestrator use medium effort as the balanced default.
-Targeted repair, specialist review, exact-diff review and final review retain high
-effort. The installed package inherits the configured model and does not pin one.
-
-## Finding handoff
-
-Reviewer output conforms to
-`.claude/quality-workflow/schemas/review-findings.schema.json`. A repair needs the
-entire confirmed finding—not just its ID—because the repair agent starts with a
-fresh context; the orchestrator supplies it directly. See
-`.claude/quality-workflow/examples/findings.example.json`.
-
-Validate a saved report without third-party dependencies:
-
-```sh
-node ~/.claude/quality-workflow/scripts/validate-findings.mjs review-findings.json
+```text
+/fix-review F-001 F-003
+/final-review
 ```
 
-The required fields deliberately describe the defect and required outcome, not a
-prescribed implementation. This prevents the reviewer from becoming the fixer.
-
-## Safety properties
-
-- Reviewer, triage, repair-diff, and final-review agents run in `plan` permission
-  mode and explicitly disallow edit/write tools.
-- Review skills run in forked contexts, independent of the implementation chat.
-- Repair is the only workflow agent with edit tools.
-- Freeze records a stable implementation checkpoint; review never targets a
-  moving branch implicitly.
-- Prepared evidence is stored below `.git/claude-quality-workflow`, so generated
-  reports never pollute commits.
-- Accepted repairs are represented by hidden Git snapshots. They include tracked
-  and untracked repair files without staging them in the user's real index.
-- No skill contains an auto-fix or convergence loop.
-- Reviewer lanes have machine-checkable `COMPLETE`/`PARTIAL` status and bounded
-  automatic resumption; incomplete lanes block triage and merge readiness.
-- A failed deterministic gate is not “fixed” by weakening tests, types, lint,
-  validation, coverage, or security checks.
-
-## Adaptation notes
-
-The template is intentionally stack-neutral. Customize `CLAUDE.md`, validation
-commands, and severity policy for the repository. Do not casually weaken the
-role boundary or make the review command write-enabled; that boundary is the
-main quality control.
-
-See [docs/architecture.md](docs/architecture.md) for the rationale and
-[docs/operations.md](docs/operations.md) for failure handling and edge cases, and
-[docs/validation-report.md](docs/validation-report.md) for the completed checks.
+Repairs are left uncommitted. The commands never push or resolve pull-request comments unless separately asked.

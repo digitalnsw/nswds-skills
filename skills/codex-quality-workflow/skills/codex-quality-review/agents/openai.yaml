@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex quality review"
+  short_description: "Fast stateless review of the current branch"
+  default_prompt: "Use $codex-quality-review to review this branch without changing it."

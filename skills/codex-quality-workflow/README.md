@@ -1,128 +1,35 @@
-# Quality workflow for Codex
+# Codex quality review
 
-Native Codex companion to the Claude Code package. Install once, invoke in any
-repository. Requires Node.js 18+, Bash, Git and an installed, authenticated Codex
-CLI. Local desktop/CLI workflows are supported; a cloud-only environment without
-the CLI is not supported by this runner.
+A small, stateless review toolkit for Codex. It installs three skills globally:
 
-```sh
+- `$codex-quality-review [base branch]` reviews the current branch and working tree without editing it.
+- `$codex-fix-review [finding IDs or description]` repairs only selected findings and validates the repair once.
+- `$codex-final-review [base branch]` runs the repository's real merge gates once and performs a final review.
+
+The review skill automatically detects the default branch. Pass a branch name only when you want a different comparison. Reports are concise Markdown in the conversation.
+
+There is no persistent run state, frozen commit, separate CLI worker, lane retry, repository initialization, JSON report, or convergence loop. The current Codex task performs the work directly, which avoids paying for several overlapping reviewers.
+
+## Install
+
+```bash
 ./install.sh --dry-run
 ./install.sh
 ```
 
-Installs two skills under `~/.agents/skills`, without changing Codex config.toml,
-global AGENTS.md, model settings or Claude files. Changed installed skill files
-are backed up under `~/.agents/quality-workflow-backups`; unchanged files are not.
-The dry run makes no changes. For an isolated install use
-`./install.sh --target /absolute/test-skills`.
+The default target is `~/.agents/skills`. Use `--target <directory>` for an isolated installation. Updating from the former workflow removes its two old skills and its workflow backup directory. The installer does not create new backups.
 
-In Codex, after committing your intended implementation:
+## Normal use
 
 ```text
-$codex-quality-workflow
+$codex-quality-review
 ```
 
-Optional: `$codex-quality-workflow review-only`,
-`$codex-quality-workflow prepare`, or `$codex-quality-workflow develop` for a
-nonstandard destination branch. `$codex-prepare-review` prepares evidence alone.
-These are Codex skill mentions, not the Claude slash commands. Restart Codex if
-the installed skills do not appear in its picker.
+Then approve only the findings you want changed:
 
-## What runs
-
-The main conversation prepares quick evidence, starts the full configured gate
-alongside review, and coordinates independent Codex CLI
-workers. One senior reviewer is the default; add specialists only for a justified
-high-risk domain or explicit exhaustive request. Reviewers remain read-only.
-The runner saves their reports, verifies completion and snapshot IDs, and retries
-partial/malformed output automatically, up to three attempts. Valid earlier findings
-travel into the continuation; narration contributes no completed coverage.
-
-The parent triages, using another reviewer only when a second opinion is needed.
-A workspace-write worker implements a coherent batch of 1–5 related findings.
-Worker browser restrictions defer verification to the parent, not the user.
-Parent targeted checks and independent diff review establish provisional
-checkpoints. Full gates run at cross-cutting integration checkpoints and final
-preparation, not automatically per finding. Final review controls acceptance.
-Failed validation triggers automatic bounded
-diagnosis before a repair is judged failed: inspect the assertion, compare the
-pending diff and gather reproduction evidence. Proven regressions, disputed
-repairs and separately diagnosed defects that need new repair authority still
-block acceptance; a passing retry never erases an unexplained intermittent failure.
-Repairs remain uncommitted, and the user's staging area stays under their control.
-
-Reports are Markdown with separate counts for findings, implementation,
-verification, independent review and acceptance. JSON is internal evidence.
-Legacy paused runs import their existing triage and resume the known diff and
-completed reviews. They do not reinitialize or replay a write worker just to
-replace PARTIAL with another status label.
-
-This removes orchestration overhead, not a measured claim of Copilot parity.
-Preparation, workers and parent checks retain timings for real-run comparison.
-
-The analytical content preserves all nine review passes from the Claude package.
-CodeQL/Semgrep/custom analyzers can be supplied using analysis.commands; installed
-ESLint and Ruff are detected automatically. No analyzer is downloaded implicitly.
-
-## Repository gates and state
-
-Before validation, dependency preflight detects missing npm workspace links and
-stale installed packages. The parent can perform one lockfile-preserving restore
-with host permissions, without upgrades or automatic lifecycle scripts. It verifies
-source/staging state is unchanged, then reruns validation. Installation is never
-delegated to reviewers, hidden inside a gate, or repeated as a fix loop. Init-only
-does not install. Other managers need an inspected frozen-install procedure.
-
-Initialization is automatic before validation. `$codex-quality-workflow init`
-performs setup only; `init refresh` reinspects gate definitions. Codex reads CI,
-workspace manifests and called helpers, then saves a plan in Git-local
-`quality-workflow-init` metadata. Setup does not dirty source or run reviews.
-Changes to CI/manifests or recorded helpers invalidate the generated plan.
-
-Validation lookup: repo `.codex/quality-workflow/validation.commands`, then
-existing repo `.claude/quality-workflow/validation.commands`, then the generated
-local plan (shared with Claude). Explicit files are preserved. A global default
-inside the skill is a baseline fallback only, not repository onboarding. Analysis
-configuration still uses repo .codex, repo .claude, then skill-directory precedence.
-CI-only checks are recorded as gaps, not passed gates. Missing tools or failing
-checks still block approval; safe failed evidence can proceed to initial review
-and targeted repair in full mode. Missing configuration alone needs no manual setup.
-
-Evidence, reports, retry counters and hidden snapshots live under the Git path
-`codex-quality-workflow`. Use `git rev-parse --git-path codex-quality-workflow` in
-linked worktrees instead of assuming `.git` is a directory. Freeze archives prior
-state so an old repair snapshot cannot leak into a new run.
-
-Do not run the Claude and Codex pipelines simultaneously in the same checkout.
-They share project files but maintain independent workflow state.
-
-## Model and permissions
-
-Workers use an explicit model from their job packet when supplied. Otherwise they
-use the CLI's configured model, which can differ from the desktop selection. The
-default broad review uses medium reasoning effort for a balanced speed/quality
-profile; targeted repairs, specialist reviews and final review use high effort.
-A job can override this with `reasoningEffort`. No model is pinned by installation.
-Review workers run with read-only filesystem access; repairs use workspace-write.
-Workers have no permission escalation. If host sandbox policy prevents launching
-the CLI or writing Git state, the workflow reports that limitation; it does not
-disable sandboxing or approval controls. Remote MCP tools are outside filesystem
-sandbox enforcement; worker instructions prohibit external writes.
-
-Claude Stop/PostToolUse hooks are not ported. Required gates run explicitly within
-the workflow; this package makes no claim to enforce checks on every Codex stop.
-
-## Verification
-
-```sh
-node scripts/self-test.mjs
+```text
+$codex-fix-review F-001 F-003
+$codex-final-review
 ```
 
-The tests use isolated Git fixtures and fake CLI workers to exercise retries,
-incomplete output, snapshot checks, repair isolation and installation. They do not
-spend model usage or prove live model review quality. CLI options were checked
-against the installed Codex 0.153.4. A live authenticated end-to-end model run was
-not performed as part of packaging.
-
-Sources: [Codex skill discovery](https://learn.chatgpt.com/docs/build-skills),
-[Codex non-interactive execution](https://learn.chatgpt.com/docs/non-interactive-mode).
+Repairs are left uncommitted. Nothing is pushed or resolved remotely unless separately requested.

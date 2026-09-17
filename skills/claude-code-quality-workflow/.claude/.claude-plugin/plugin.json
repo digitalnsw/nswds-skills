@@ -1,6 +1,6 @@
 {
-  "name": "claude-code-quality-workflow",
-  "version": "3.0.0",
-  "description": "Evidence-driven read-only review and controlled repair workflow for Claude Code",
-  "author": { "name": "Claude Code Quality Workflow Contributors" }
+  "name": "claude-code-quality-review",
+  "version": "1.0.0",
+  "description": "Fast stateless branch review, selected repair, and final verification",
+  "author": { "name": "Digital NSW" }
 }

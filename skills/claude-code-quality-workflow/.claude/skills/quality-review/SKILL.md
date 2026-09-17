@@ -1,19 +1,15 @@
 ---
 name: quality-review
-description: Run an independent read-only evidence-driven review of the frozen implementation. Reports findings only.
-argument-hint: "[optional scope]"
+description: Review the current branch and working tree for concrete defects without editing it. Use for a fast Copilot-style code review.
+argument-hint: "[optional base branch]"
 disable-model-invocation: true
 context: fork
-agent: senior-code-reviewer
+agent: quality-reviewer
 background: false
 ---
 
-Review the frozen implementation now. Optional user scope: `$ARGUMENTS`.
+Run the active Claude configuration directory's `quality-review/scripts/review-scope.mjs`, passing `$ARGUMENTS` only when the user supplied a base branch. Use the detected branch and merge base; do not ask the user for a commit SHA.
 
-First run the active config directory's
-`quality-workflow/scripts/prepare-review.sh initial`. Require `REVIEWABLE=1`
-(or legacy `READY=1`), then read
-the emitted evidence manifest and every relevant evidence artifact. Apply the
-complete reviewer playbook, verify every finding, and return structured findings
-only. Never edit or repair. If preparation fails but evidence is reviewable,
-diagnose the failed gate as part of review. Unsafe evidence still blocks review.
+Review that scope now. Start with the diff, then inspect only the repository context needed to verify changed behavior, contracts, consumers, tests, security boundaries, and delivery plumbing. Run fast, non-mutating deterministic checks when they materially help; do not make a full test suite a prerequisite to reviewing.
+
+Return the Markdown format from `quality-review/review-guide.md`. Do not edit files, create evidence directories, persist state, or ask whether stale workflow state should be resumed. If HEAD changes, review the current state afresh.

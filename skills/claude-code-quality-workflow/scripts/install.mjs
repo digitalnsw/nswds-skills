@@ -43,15 +43,19 @@ function assertSafe(path) {
 }
 
 function safeRelative(rel) {
-  if (typeof rel !== "string" || !rel || isAbsolute(rel) || normalize(rel) !== rel || rel === ".." || rel.startsWith(`..${sep}`)) throw new Error("not a normalized path inside the target");
+  if (typeof rel !== "string" || !rel || isAbsolute(rel) || normalize(rel) !== rel || rel === "." || rel === ".." || rel.startsWith(`..${sep}`) || /[\\/]$/.test(rel)) throw new Error("not a normalized file path inside the target");
   return rel;
 }
 
-function removeFile(path) {
+// Manifest entries name files, so removing one never recurses; only the
+// version 1 runtime directory, which this package created, is removed whole.
+function removeFile(path, { recursive = false } = {}) {
   assertSafe(path);
-  if (!lstatIfPresent(path)) return;
+  const stat = lstatIfPresent(path);
+  if (!stat) return;
+  if (stat.isDirectory() && !recursive) { console.log(`kept (not a regular file, so not something this installer wrote): ${path}`); return; }
   say("removed", "would remove", path);
-  if (!dryRun) rmSync(path, { recursive: true, force: true });
+  if (!dryRun) rmSync(path, { recursive, force: true });
 }
 
 function pruneEmpty(directory) {
@@ -119,27 +123,55 @@ for (const path of legacyManifests) {
   }
 }
 
+// Versions 1.0 and 1.1 recorded paths without hashes but copied files verbatim,
+// so a hashless file is pristine only when it matches something they released.
+const releasedHashes = new Set(JSON.parse(readFileSync(join(root, "scripts", "legacy-hashes.json"), "utf8")));
+
 function untouched(rel) {
   const path = join(target, rel);
   const stat = lstatIfPresent(path);
   if (!stat?.isFile()) return false;
   const recorded = owned.get(rel);
-  return recorded === null || recorded === digest(readFileSync(path));
+  const actual = digest(readFileSync(path));
+  return recorded === null ? releasedHashes.has(actual) : recorded === actual;
+}
+
+// Copies a file the user owns or edited into the one backup directory. Reuses a
+// backup with the same content; steps past anything else already at that name.
+const backedUp = [];
+function backUp(rel) {
+  const source = join(target, rel);
+  const current = digest(readFileSync(source));
+  let backup = "";
+  for (let count = 0; !backup; count += 1) {
+    const candidate = count ? `${join(backupRoot, rel)}.${count}` : join(backupRoot, rel);
+    const taken = lstatIfPresent(candidate);
+    if (taken && (!taken.isFile() || digest(readFileSync(candidate)) !== current)) continue;
+    assertSafe(candidate);
+    backup = candidate;
+  }
+  backedUp.push(backup);
+  if (!dryRun) { mkdirSync(dirname(backup), { recursive: true }); writeFileSync(backup, readFileSync(source)); }
 }
 
 // Remove what earlier versions installed and this version does not.
 for (const rel of owned.keys()) {
   if (!uninstall && wanted.has(rel)) continue;
   const path = join(target, rel);
-  if (!lstatIfPresent(path)) continue;
-  if (untouched(rel)) { removeFile(path); pruneEmpty(dirname(path)); }
+  const stat = lstatIfPresent(path);
+  if (!stat) continue;
+  if (!stat.isFile()) { console.log(`kept (not a regular file, so not something this installer wrote): ${path}`); continue; }
+  const legacyFile = owned.get(rel) === null;
+  // An edited file from version 1.0 or 1.1 is backed up and still removed: left
+  // in place, an obsolete agent or command would stay active.
+  if (legacyFile && !untouched(rel)) backUp(rel);
+  if (legacyFile || untouched(rel)) { removeFile(path); pruneEmpty(dirname(path)); }
   else console.log(`kept (modified since it was installed): ${path}`);
 }
 for (const path of legacyManifests) removeFile(path);
 for (const name of ["quality-review", "quality-workflow"]) pruneEmpty(join(target, name));
 removeLegacyWorkflow();
 
-const backedUp = [];
 if (uninstall) {
   removeFile(manifestPath);
   pruneEmpty(reviewDirectory);
@@ -150,18 +182,7 @@ if (uninstall) {
     const stat = lstatIfPresent(destination);
     if (stat?.isFile() && digest(readFileSync(destination)) === digest(content)) continue;
     if (stat && !untouched(rel)) {
-      // Reuse a backup with the same content; step past anything else already at that name.
-      const current = digest(readFileSync(destination));
-      let backup = "";
-      for (let count = 0; !backup; count += 1) {
-        const candidate = count ? `${join(backupRoot, rel)}.${count}` : join(backupRoot, rel);
-        const taken = lstatIfPresent(candidate);
-        if (taken && (!taken.isFile() || digest(readFileSync(candidate)) !== current)) continue;
-        assertSafe(candidate);
-        backup = candidate;
-      }
-      backedUp.push(backup);
-      if (!dryRun) { mkdirSync(dirname(backup), { recursive: true }); writeFileSync(backup, readFileSync(destination)); }
+      backUp(rel);
     }
     say(stat ? "updated" : "installed", stat ? "would update" : "would install", destination);
     if (!dryRun) { mkdirSync(dirname(destination), { recursive: true }); writeFileSync(destination, content); }
@@ -205,7 +226,7 @@ function removeLegacyWorkflow() {
       if (!dryRun) writeFileSync(claudeMd, cleaned.replace(/^\n+|\n+$/g, "") ? `${cleaned.replace(/^\n+|\n+$/g, "")}\n` : "", { mode: statSync(claudeMd).mode });
     }
   }
-  if (hadVersionOneRuntime) removeFile(runtime);
+  if (hadVersionOneRuntime) removeFile(runtime, { recursive: true });
 }
 
 if (backedUp.length) {

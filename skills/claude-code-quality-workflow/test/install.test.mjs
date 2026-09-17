@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { test } from "node:test";
 import { join } from "node:path";
-import { installer, ok, run, tempDir, write } from "./helpers.mjs";
+import { installer, ok, packageRoot, run, tempDir, write } from "./helpers.mjs";
+
+// Byte-exact copy of a file released in 1.1.0, as an upgrading user would have it.
+const releasedAgent = readFileSync(join(packageRoot, "test/fixtures/released-1.1-quality-reviewer.md"), "utf8");
 
 const install = (target, ...args) => ok("node", [installer, "--target", target, ...args]);
 const tree = (directory, prefix = "") => existsSync(directory) ? readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
@@ -92,14 +95,17 @@ test("replaces earlier versions of this package without touching anything else",
     "skills/freeze-review/SKILL.md": "v1\n",
     "quality-review/install-manifest.json": JSON.stringify({ version: "1.0.0", files: ["agents/quality-reviewer.md", "quality-review/review-guide.md", "skills/quality-review/SKILL.md"] }),
     "quality-review/review-guide.md": "v2\n",
-    "agents/quality-reviewer.md": "v2\n",
+    "agents/quality-reviewer.md": releasedAgent,
     "skills/quality-review/SKILL.md": "v2\n",
     "settings.json": JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: `"${target}/quality-workflow/scripts/verify-on-stop.sh"` }, { type: "command", command: foreignHook }] }] } }),
     "CLAUDE.md": "keep\n\n<!-- claude-quality-workflow:start -->\n@old\n<!-- claude-quality-workflow:end -->\n"
   });
   const output = install(target);
-  assert.doesNotMatch(output, /Backed up/);
-  assert.equal(existsSync(join(target, "backups")), false);
+  // Legacy manifests carry no hashes: a file matching a released version is
+  // pristine and simply removed; anything else may hold edits, so it is kept as a backup.
+  assert.match(output, /Backed up 5 file\(s\)/);
+  assert.deepEqual(tree(join(target, "backups/quality-review")), ["agents/senior-code-reviewer.md", "quality-review/review-guide.md", "quality-workflow/scripts/prepare-review.mjs", "skills/freeze-review/SKILL.md", "skills/quality-review/SKILL.md"]);
+  assert.equal(readFileSync(join(target, "backups/quality-review/agents/senior-code-reviewer.md"), "utf8"), "v1\n");
   for (const gone of ["quality-workflow", "quality-review", "agents/senior-code-reviewer.md", "agents/quality-reviewer.md", "skills/freeze-review"]) assert.equal(existsSync(join(target, gone)), false, gone);
   assert.equal(readFileSync(join(target, "agents/my-own-agent.md"), "utf8"), "mine\n");
   assert.equal(readFileSync(outside, "utf8"), "keep\n");
@@ -167,5 +173,53 @@ test("a directory or symbolic link at the backup name is stepped past, not read"
     assert.match(install(target), /Backed up 1 file/, blocker);
     assert.equal(readFileSync(`${taken}.1`, "utf8"), "mine\n", blocker);
     assert.equal(readFileSync(join(temp, "outside.txt"), "utf8"), "outside\n", blocker);
+  }
+});
+
+test("the released-file hash list is well formed and recognises a released file", async () => {
+  const { createHash } = await import("node:crypto");
+  const hashes = JSON.parse(readFileSync(join(packageRoot, "scripts/legacy-hashes.json"), "utf8"));
+  assert.ok(hashes.length > 0 && hashes.every((hash) => /^[0-9a-f]{64}$/.test(hash)));
+  assert.deepEqual(hashes, [...new Set(hashes)].sort());
+  assert.ok(hashes.includes(createHash("sha256").update(releasedAgent).digest("hex")));
+});
+
+test("an edited legacy file is backed up before an upgrade or uninstall removes it; a pristine one is not", () => {
+  for (const mode of ["upgrade", "uninstall"]) {
+    const target = join(tempDir(), "claude");
+    write(target, {
+      "quality-review/install-manifest.json": JSON.stringify({ version: "1.0.0", files: ["agents/quality-reviewer.md", "agents/repair-reviewer.md"] }),
+      "agents/quality-reviewer.md": releasedAgent,
+      "agents/repair-reviewer.md": `${releasedAgent}\nMY OWN EXTRA INSTRUCTIONS\n`
+    });
+    assert.match(install(target, "--dry-run", ...(mode === "uninstall" ? ["--uninstall"] : [])), /Would back up 1 file/, mode);
+    assert.equal(existsSync(join(target, "backups")), false, mode);
+    const output = install(target, ...(mode === "uninstall" ? ["--uninstall"] : []));
+    assert.match(output, /Backed up 1 file\(s\)[\s\S]*backups\/quality-review\/agents\/repair-reviewer\.md/, mode);
+    assert.deepEqual(tree(join(target, "backups")), ["quality-review/agents/repair-reviewer.md"], mode);
+    assert.match(readFileSync(join(target, "backups/quality-review/agents/repair-reviewer.md"), "utf8"), /MY OWN EXTRA INSTRUCTIONS/, mode);
+    assert.equal(existsSync(join(target, "agents")), false, `${mode}: obsolete agents must not stay active`);
+  }
+});
+
+test("a manifest can only name files: directory entries are refused and nothing is removed recursively", () => {
+  for (const mode of ["upgrade", "uninstall"]) {
+    for (const entry of [".", "./", "skills", "skills/", "skills/mine", ".."]) {
+      const target = join(tempDir(), "claude");
+      install(target);
+      write(target, { "settings.json": "{}\n", "skills/mine/SKILL.md": "mine\n" });
+      const manifestPath = join(target, "skills/quality-review/.install-manifest.json");
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      manifest.files[entry] = null;
+      writeFileSync(manifestPath, JSON.stringify(manifest));
+      const result = run("node", [installer, "--target", target, ...(mode === "uninstall" ? ["--uninstall"] : [])]);
+      const label = `${mode} ${JSON.stringify(entry)}`;
+      assert.equal(result.status, 0, label);
+      assert.equal(readFileSync(join(target, "settings.json"), "utf8"), "{}\n", label);
+      assert.equal(readFileSync(join(target, "skills/mine/SKILL.md"), "utf8"), "mine\n", label);
+      assert.doesNotMatch(result.stdout, /modified since it was installed/, label);
+      if ([".", "./", "skills/", ".."].includes(entry)) assert.match(result.stderr, /skipping manifest entry/, label);
+      else assert.match(result.stdout, /kept \(not a regular file, so not something this installer wrote\)/, label);
+    }
   }
 });

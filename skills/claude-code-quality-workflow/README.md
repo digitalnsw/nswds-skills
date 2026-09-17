@@ -30,7 +30,7 @@ The installer writes to `~/.claude/skills/` (or `$CLAUDE_CONFIG_DIR`, or `--targ
 
 A file is backed up only when the installer is about to overwrite something it did not write, or something you edited after installation. Backups go to one place, `~/.claude/backups/quality-review/`, and the installer lists each one. An ordinary update creates no backups.
 
-Version 1 of this package installed agents, hooks in `settings.json`, an import in `CLAUDE.md` and a `quality-workflow/` runtime directory. The installer removes exactly those and nothing else.
+Versions 1.0 and 1.1 installed agents, and version 1.0 also added hooks in `settings.json`, an import in `CLAUDE.md` and a `quality-workflow/` runtime directory. The installer removes exactly those and nothing else. Those versions recorded no hashes, so the installer compares each of their files with the hashes of what they released (`scripts/legacy-hashes.json`). A file that matches is removed; a file that does not may hold your edits, so it is backed up first and then removed, because an obsolete agent left in place would stay active.
 
 Remove the commands:
 
@@ -122,7 +122,7 @@ Because the commands pin their own model, changing the session model does not ch
 node --test "test/*.test.mjs"
 ```
 
-These tests need no model. They cover base selection, the surface inventory, check discovery, the free-port helper, the report check (including the Stop-hook protocol) and the installer.
+These tests need no model. `scripts/legacy-hashes.json` is the sorted sha256 of every file under `.claude/` at the `v1.0.0` and `v1.1.0` tags; it never needs regenerating unless another hashless version is found in the wild. They cover base selection, the surface inventory, check discovery, the free-port helper, the report check (including the Stop-hook protocol) and the installer.
 
 ```bash
 node test/live/run-live.mjs

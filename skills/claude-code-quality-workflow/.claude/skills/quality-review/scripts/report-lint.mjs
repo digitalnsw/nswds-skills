@@ -10,7 +10,7 @@
 // MAX_BLOCKS times, counted from the session transcript, so it can never trap.
 import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { fingerprint, mustAccountFor, reviewScope } from "./review-scope.mjs";
+import { BRANCH_TOKEN, fingerprint, mustAccountFor, reviewScope } from "./review-scope.mjs";
 
 const FORBIDDEN = [
   [/\b(sorry|apologi[sz]e|apologies|you(?:'|’)re right|you are right|my mistake)\b/i, "apology"],
@@ -50,10 +50,10 @@ function coveredPaths(coverage) {
   };
 }
 
-// How many times this hook has already blocked the current turn: its feedback
-// entries in the transcript since the last prompt the user typed. Null when the
-// transcript cannot be read.
-export function priorBlocks(transcriptPath) {
+// The last 4MB of the transcript, as lines, most recent first. Null when the
+// path is missing or unreadable, so callers can tell "no transcript" apart
+// from "read it and found nothing".
+function tailLines(transcriptPath) {
   if (typeof transcriptPath !== "string" || !transcriptPath.endsWith(".jsonl")) return null;
   let descriptor;
   try {
@@ -62,22 +62,52 @@ export function priorBlocks(transcriptPath) {
     const length = Math.min(size, 4 * 1024 * 1024);
     const buffer = Buffer.alloc(length);
     readSync(descriptor, buffer, 0, length, size - length);
-    let count = 0;
-    for (const line of buffer.toString("utf8").split("\n").reverse()) {
-      let entry;
-      try { entry = JSON.parse(line); } catch { continue; }
-      if (entry?.type !== "user") continue;
-      const content = entry.message?.content;
-      const text = typeof content === "string" ? content : "";
-      if (entry.isMeta) { if (text.startsWith("Stop hook feedback") && text.includes(BLOCK_MARKER)) count += 1; continue; }
-      if (typeof content === "string") break; // the prompt that started this turn
-    }
-    return count;
+    return buffer.toString("utf8").split("\n").reverse();
   } catch {
     return null;
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
+}
+
+// How many times this hook has already blocked the current turn: its feedback
+// entries in the transcript since the last prompt the user typed. Null when the
+// transcript cannot be read.
+export function priorBlocks(transcriptPath) {
+  const lines = tailLines(transcriptPath);
+  if (lines === null) return null;
+  let count = 0;
+  for (const line of lines) {
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (entry?.type !== "user") continue;
+    const content = entry.message?.content;
+    const text = typeof content === "string" ? content : "";
+    if (entry.isMeta) { if (text.startsWith("Stop hook feedback") && text.includes(BLOCK_MARKER)) count += 1; continue; }
+    if (typeof content === "string") break; // the prompt that started this turn
+  }
+  return count;
+}
+
+// The base-branch argument the operator actually passed to the command, read
+// from the prompt that started this turn rather than from the report: the
+// harness writes that prompt before the model runs, so unlike the report's own
+// **Base:** line, the model cannot use it to claim a different, narrower scope
+// than the one it was actually shown. "" when there is no transcript, no such
+// prompt, or the argument is not a bare branch/ref token.
+export function commandArgument(transcriptPath) {
+  const lines = tailLines(transcriptPath);
+  if (lines === null) return "";
+  for (const line of lines) {
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (entry?.type !== "user" || entry.isMeta) continue;
+    const content = entry.message?.content;
+    if (typeof content !== "string") continue;
+    const argument = /User's argument for this review \(may be empty\):[ \t]*([^\n]*)/.exec(content)?.[1]?.trim() ?? "";
+    return BRANCH_TOKEN.test(argument) ? argument : "";
+  }
+  return "";
 }
 
 function prose(markdown) {
@@ -130,11 +160,11 @@ export function lintReport(report, { final = false, scope = null, currentFingerp
   return problems;
 }
 
-function repositoryFacts(report, cwd) {
+function repositoryFacts(cwd, transcriptPath) {
   try {
-    const stated = /\*\*Base:?\*\*:?\s*`?([^\s`·|,()]+)/i.exec(report)?.[1] ?? "";
+    const requested = commandArgument(transcriptPath);
     let scope;
-    try { scope = reviewScope({ requested: stated, cwd, usePullRequest: false }); } catch { scope = reviewScope({ cwd, usePullRequest: false }); }
+    try { scope = reviewScope({ requested, cwd, usePullRequest: false }); } catch { scope = reviewScope({ cwd, usePullRequest: false }); }
     return { scope: scope.base ? scope : null, currentFingerprint: fingerprint(scope.root) };
   } catch {
     return {};
@@ -148,7 +178,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     try {
       const input = JSON.parse(readFileSync(0, "utf8"));
       const report = String(input.last_assistant_message ?? "");
-      const problems = lintReport(report, { final, ...repositoryFacts(report, input.cwd || process.cwd()) });
+      const problems = lintReport(report, { final, ...repositoryFacts(input.cwd || process.cwd(), input.transcript_path) });
       if (problems.length === 0) process.exit(0);
       if (input.stop_hook_active) {
         // A retry implies at least one recorded block; zero means the transcript is behind, so stop counting on it.
@@ -164,7 +194,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const repoAt = args.indexOf("--repo");
   const repo = repoAt === -1 ? "" : args[repoAt + 1];
   const report = readFileSync(0, "utf8");
-  const problems = lintReport(report, { final, ...(repo ? repositoryFacts(report, repo) : {}) });
+  const problems = lintReport(report, { final, ...(repo ? repositoryFacts(repo) : {}) });
   if (problems.length) { console.error(problems.map((problem) => `- ${problem}`).join("\n")); process.exit(1); }
   console.log("report-lint: ok");
 }

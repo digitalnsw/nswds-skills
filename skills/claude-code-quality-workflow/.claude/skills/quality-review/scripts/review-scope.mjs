@@ -10,6 +10,11 @@ import { fileURLToPath } from "node:url";
 
 const USAGE = "usage: review-scope.mjs [--json | --fingerprint] [base-branch]";
 
+// A bare branch/ref name, as opposed to free text: what the `--skill` argument
+// and the transcript-recorded command argument are both tested against before
+// either is trusted as an explicit base override.
+export const BRANCH_TOKEN = /^[\w./-]+$/;
+
 function git(args, { optional = false, cwd = process.cwd() } = {}) {
   const result = spawnSync("git", args, { encoding: "utf8", cwd, maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0) {
@@ -354,7 +359,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       let requested = positional[0]?.trim() ?? "";
       let note = "";
       let unusable = "";
-      if (skill && requested && !/^[\w./-]+$/.test(requested)) { note = requested; requested = ""; }
+      if (skill && requested && !BRANCH_TOKEN.test(requested)) { note = requested; requested = ""; }
       let scope;
       try {
         scope = reviewScope({ requested });

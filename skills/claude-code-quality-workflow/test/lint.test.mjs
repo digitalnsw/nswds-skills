@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { join } from "node:path";
-import { makeRepo, ok, run, scripts, tempDir } from "./helpers.mjs";
+import { makeRepo, ok, run, scripts, tempDir, write } from "./helpers.mjs";
 import { writeFileSync } from "node:fs";
-import { lintReport, priorBlocks } from "../.claude/skills/quality-review/scripts/report-lint.mjs";
+import { commandArgument, lintReport, priorBlocks } from "../.claude/skills/quality-review/scripts/report-lint.mjs";
 
 const lintScript = join(scripts, "report-lint.mjs");
 const finding = `### F1 · High · Discount is applied twice
@@ -172,4 +172,61 @@ test("as a Stop hook: a rewritten answer is checked again, and a turn is blocked
   assert.equal(priorBlocks("/nonexistent/session.jsonl"), null);
   assert.equal(priorBlocks(join(repo, "src/price.js")), null);
   assert.equal(run("node", [join(scripts, "report-lint.mjs"), "--hook"], { input: JSON.stringify({ cwd: repo, stop_hook_active: true, last_assistant_message: "I'll continue." }) }).status, 0, "no transcript: never trap");
+});
+
+test("commandArgument reads the operator's argument from the prompt that started the turn, not from anywhere else", () => {
+  const transcript = join(tempDir(), "session.jsonl");
+  const writePrompt = (content) => writeFileSync(transcript, `${JSON.stringify({ type: "user", message: { role: "user", content } })}\n`);
+  writePrompt("Review...\n\nUser's argument for this review (may be empty): release-branch\n\nWhen the argument names a branch...");
+  assert.equal(commandArgument(transcript), "release-branch");
+  writePrompt("Review...\n\nUser's argument for this review (may be empty): \n\nWhen the argument names a branch...");
+  assert.equal(commandArgument(transcript), "", "an empty argument is not a branch");
+  writePrompt("Review...\n\nUser's argument for this review (may be empty): focus on the auth module\n\nWhen the argument names a branch...");
+  assert.equal(commandArgument(transcript), "", "free text is not a bare branch token");
+  assert.equal(commandArgument(undefined), "", "no transcript");
+  assert.equal(commandArgument("/nonexistent/session.jsonl"), "", "unreadable transcript");
+});
+
+// A repo where `feature` makes two commits: the first adds a file with a real
+// defect, the second is a trivial, unrelated tweak. `checkpoint` is a real,
+// resolvable branch pointing at the first commit, so treating it as the base
+// would hide the defective file from the diff entirely.
+function makeCheckpointRepo() {
+  const repo = tempDir();
+  const git = (...args) => ok("git", args, { cwd: repo });
+  git("init", "-q", "-b", "main");
+  git("config", "user.email", "test@example.invalid");
+  git("config", "user.name", "Test");
+  git("config", "commit.gpgsign", "false");
+  write(repo, { "src/keep.js": "1\n" });
+  git("add", "-A"); git("commit", "-q", "-m", "base");
+  git("checkout", "-q", "-b", "feature");
+  write(repo, { "src/hidden.js": "export function riskyThing() { return null.x; }\n" });
+  git("add", "-A"); git("commit", "-q", "-m", "feature: add hidden risky file");
+  git("branch", "checkpoint");
+  write(repo, { "src/keep.js": "2\n" });
+  git("add", "-A"); git("commit", "-q", "-m", "feature: trivial tweak to keep.js");
+  return repo;
+}
+
+test("as a Stop hook: a false **Base:** claim in the report cannot shrink the required coverage", () => {
+  const repo = makeCheckpointRepo();
+  const print = /: (\w+)/.exec(ok("node", [join(scripts, "review-scope.mjs"), "--fingerprint"], { cwd: repo }))[1];
+  const report = `# Quality review: feature\n\n**Base:** checkpoint · **Merge base:** deadbee · **Head:** 89abcde\n\n**Outcome:** No actionable findings\n\n## Coverage\n\n| Surface | Status | What was checked |\n| --- | --- | --- |\n| \`src/keep.js\` | Assessed | trivial tweak, no risk |\n\n**Checks run:** none\n**Worktree:** opening fingerprint ${print}, closing fingerprint ${print} — unchanged\n`;
+  // No transcript at all: the hook must fall back to the real, automatically
+  // selected scope (against main) rather than believing the report's own claim.
+  const result = run("node", [join(scripts, "report-lint.mjs"), "--hook"], { input: JSON.stringify({ cwd: repo, stop_hook_active: false, last_assistant_message: report }) });
+  assert.equal(result.status, 2, "a report that hides src/hidden.js behind a fake base must be rejected");
+  assert.match(result.stderr, /src\/hidden\.js/);
+});
+
+test("as a Stop hook: a base the operator actually asked for, recorded in the transcript, is honored", () => {
+  const repo = makeCheckpointRepo();
+  const print = /: (\w+)/.exec(ok("node", [join(scripts, "review-scope.mjs"), "--fingerprint"], { cwd: repo }))[1];
+  const report = `# Quality review: feature\n\n**Base:** checkpoint · **Merge base:** deadbee · **Head:** 89abcde\n\n**Outcome:** No actionable findings\n\n## Coverage\n\n| Surface | Status | What was checked |\n| --- | --- | --- |\n| \`src/keep.js\` | Assessed | trivial tweak, no risk |\n\n**Checks run:** none\n**Worktree:** opening fingerprint ${print}, closing fingerprint ${print} — unchanged\n`;
+  const transcript = join(tempDir(), "session.jsonl");
+  const prompt = "Review the current branch now...\n\nUser's argument for this review (may be empty): checkpoint\n\nWhen the argument names a branch, that branch is the base...";
+  writeFileSync(transcript, `${JSON.stringify({ type: "user", message: { role: "user", content: prompt } })}\n`);
+  const result = run("node", [join(scripts, "report-lint.mjs"), "--hook"], { input: JSON.stringify({ cwd: repo, stop_hook_active: false, transcript_path: transcript, last_assistant_message: report }) });
+  assert.equal(result.status, 0, result.stderr);
 });

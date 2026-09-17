@@ -88,8 +88,12 @@ test("requires every changed production file to be assessed or named as a gap", 
     { path: "src/cart/total.js", kind: "production", status: "A" },
     { path: "src/cart/tax.js", kind: "production", status: "A" },
     { path: "src/gone.js", kind: "production", status: "D" },
-    { path: "test/price.test.js", kind: "test", status: "M" }
+    { path: "test/price.test.js", kind: "test", status: "M", removed: 2 },
+    { path: "package-lock.json", kind: "generated", status: "M", removed: 900 }
   ] };
+  const gutted = { files: [{ path: "README.md", kind: "docs", status: "M", removed: 33 }] };
+  assert.match(lintReport(clean, { scope: gutted })[0], /README\.md/);
+  assert.deepEqual(lintReport(clean.replace("## Coverage", "## Coverage\n\n| `README.md` | Assessed | removed section is intended |"), { scope: gutted }), []);
   const problems = lintReport(clean, { scope });
   assert.equal(problems.length, 1);
   assert.match(problems[0], /src\/cart\/total\.js, src\/cart\/tax\.js/);
@@ -120,4 +124,10 @@ test("as a Stop hook: blocks an incomplete answer once, passes a complete one, a
   assert.equal(hook(clean.replace("closing fingerprint abc", `closing fingerprint ${print}`)).status, 0);
 
   assert.equal(run("node", [lintScript, "--hook"], { input: "not json" }).status, 0);
+});
+
+test("rejects narration before the report title", () => {
+  const problems = lintReport(`Fingerprint unchanged. Now writing the report.\n\n${clean}`);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /does not begin with the report title/);
 });

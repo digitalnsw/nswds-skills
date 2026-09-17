@@ -147,3 +147,25 @@ test("skill mode carries the review guide, and the commands inject nothing else"
     assert.match(injections[0], /^!`node \$\{CLAUDE_SKILL_DIR\}\S*\/scripts\/review-scope\.mjs --skill`$/);
   }
 });
+
+test("a renamed and edited file keeps its line counts", () => {
+  const body = Array.from({ length: 40 }, (_, index) => `export const value${index} = ${index};`).join("\n");
+  const { repo, git } = makeRepo({ base: { "src/old-name.js": `${body}\n` } });
+  git("mv", "src/old-name.js", "src/new-name.js");
+  write(repo, { "src/new-name.js": `${body}\nexport const extra = 1;\nexport const more = 2;\n` });
+  git("add", "-A"); git("commit", "-q", "-m", "rename and edit");
+  const file = scope(repo).files.find((entry) => entry.path === "src/new-name.js");
+  assert.deepEqual([file.status, file.added, file.removed], ["R", 2, 0]);
+});
+
+test("names what a heavily cut file lost, whatever kind of file it is", () => {
+  const skills = Array.from({ length: 24 }, (_, index) => `| skill-${index} | does thing ${index} |`).join("\n");
+  const { repo } = makeRepo({
+    base: { "README.md": `# Project\n\n## Install\n\nnpm i\n\n## Skills\n\n${skills}\n\n## Layout\n\ntree\n` },
+    feature: { "README.md": "# Project\n\n## Install\n\nnpm ci\n\n## Layout\n\ntree\n" }
+  });
+  const readme = scope(repo).files.find((entry) => entry.path === "README.md");
+  assert.equal(readme.kind, "docs");
+  assert.deepEqual(readme.lost, ["## Skills"]);
+  assert.match(ok("node", [scopeScript], { cwd: repo }), /README\.md .*substantial removal[^\n]*\n  - lost and not re-added: `## Skills`/);
+});

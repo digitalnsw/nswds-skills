@@ -57,6 +57,10 @@ const findingAbout = (text, pattern) => {
   return block ? /^###\s+(F\d+)/.exec(block)[1] : "";
 };
 
+// Finding ids come from model output, so they are matched as plain strings.
+const mentions = (text, id) => text.split(/[^A-Za-z0-9]+/).includes(id);
+const rowFor = (section, id) => section.split("\n").find((line) => mentions(line, id)) ?? "";
+
 function reviewIsWellFormed(label, repo, text, { final = false } = {}) {
   const facts = JSON.parse(ok("node", [join(scripts, "review-scope.mjs"), "--json"], { cwd: repo }));
   const print = /: (\w+)/.exec(ok("node", [join(scripts, "review-scope.mjs"), "--fingerprint"], { cwd: repo }))[1];
@@ -121,15 +125,15 @@ function defectScenario() {
   const probe = run("node", ["--input-type=module", "-e", "import { listOrders } from './src/orders.js'; const o = Array.from({ length: 50 }, (_, i) => i); process.exit(listOrders(o)[0] === 0 && listOrders(o, 2)[0] === 20 ? 0 : 1);"], { cwd: repo });
   check("fix: the selected defect is actually repaired", probe.status === 0, probe.stderr.slice(0, 300));
   check("fix: left the repair uncommitted and reported what remains", ok("git", ["log", "--oneline"], { cwd: repo }).trim().split("\n").length === 2 && /## Not repaired/.test(fix.text) && /## Repaired/.test(fix.text));
-  check("fix: does not claim the unselected finding was repaired", rename ? new RegExp(`## Not repaired[\\s\\S]*${rename}\\b`).test(fix.text) : true);
+  check("fix: does not claim the unselected finding was repaired", rename ? mentions(fix.text.slice(fix.text.indexOf("## Not repaired")), rename) && !mentions(fix.text.slice(fix.text.indexOf("## Repaired"), fix.text.indexOf("## Not repaired")), rename) : true);
 
   const beforeFinal = state(repo);
   const final = claude(repo, "/final-review", { resume: fix.session ?? review.session, label: "3-defect-final-review" });
   check("final: the review did not modify the repository", state(repo) === beforeFinal);
   reviewIsWellFormed("final", repo, final.text, { final: true });
   const resolution = final.text.slice(final.text.search(/^## Finding resolution/m), final.text.search(/^## Coverage/m));
-  check("final: confirms the repaired finding as resolved from the code", new RegExp(`${pagination}\\b[^\\n]*\\bResolved`).test(resolution), resolution.slice(0, 400));
-  check("final: does not call the unrepaired finding resolved", rename ? new RegExp(`${rename}\\b[^\\n]*\\b(Not resolved|Not attempted)`).test(resolution) : true, resolution.slice(0, 400));
+  check("final: confirms the repaired finding as resolved from the code", /\|\s*Resolved\b/.test(rowFor(resolution, pagination)), resolution.slice(0, 400));
+  check("final: does not call the unrepaired finding resolved", rename ? /\|\s*(Not resolved|Not attempted)\b/.test(rowFor(resolution, rename)) : true, resolution.slice(0, 400));
   return repo;
 }
 

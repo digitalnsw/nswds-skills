@@ -89,6 +89,25 @@ const CONFIG = /(^|\/)(\.github|\.gitlab|\.circleci|\.husky|\.vscode|\.devcontai
 const PROMPT = /(^|\/)(SKILL|AGENTS|CLAUDE)\.md$|(^|\/)(skills|agents|commands|prompts)\/.+\.mdx?$/;
 const DOCS = /\.(mdx?|rst|adoc|txt)$|(^|\/)(docs?|documentation)\/|(^|\/)(LICEN[CS]E|NOTICE|CODEOWNERS)[^/]*$/i;
 
+// A modified file that lost this many lines must be accounted for in the
+// report whatever its kind: silent loss hides in documentation, tests and CI.
+const SUBSTANTIAL_REMOVAL = 20;
+export const mustAccountFor = (file) => file.status !== "D" && file.kind !== "generated" && (file.kind === "production" || (file.status === "M" && file.removed >= SUBSTANTIAL_REMOVAL));
+
+// Headings, definitions, tests and CI steps that a file lost and did not get
+// back: evidence of what a large removal actually took out.
+const LANDMARK = /^\s*(#{1,6}\s+\S|(export\s+)?(default\s+)?(async\s+)?(function|class)\s+\w|(pub\s+)?(def|fn|func)\s+\w|(test|it|describe)\s*\(|-\s+(name|run|uses):\s*\S)/;
+function removedLandmarks(mergeBase, path, cwd) {
+  const removed = [];
+  const added = new Set();
+  for (const line of git(["diff", "-U0", "-M", mergeBase, "--", path], { optional: true, cwd }).split("\n")) {
+    if (/^(---|\+\+\+)/.test(line) || !LANDMARK.test(line.slice(1))) continue;
+    if (line[0] === "-") removed.push(line.slice(1).trim());
+    else if (line[0] === "+") added.add(line.slice(1).trim());
+  }
+  return removed.filter((line) => !added.has(line)).map((line) => line.slice(0, 80));
+}
+
 export function classify(path) {
   if (GENERATED.test(path)) return "generated";
   if (TEST.test(path)) return "test";
@@ -117,11 +136,14 @@ function changedFiles(mergeBase, cwd) {
       statuses.set(names[index + 1], code);
       index += 1;
     }
-    for (const line of git(["diff", "--numstat", "-z", "-M", ...range], { cwd }).split("\0")) {
-      // With -z a rename is "added\tremoved\t" followed by two separate path records.
-      const match = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(line);
-      if (!match || !match[3]) continue;
-      record(match[3], statuses.get(match[3]) ?? "M", Number(match[1]) || 0, Number(match[2]) || 0, committed);
+    const chunks = git(["diff", "--numstat", "-z", "-M", ...range], { cwd }).split("\0");
+    for (let index = 0; index < chunks.length; index += 1) {
+      const match = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(chunks[index]);
+      if (!match) continue;
+      // With -z a rename has an empty path here, then the old and new paths as their own chunks.
+      const path = match[3] || chunks[index + 2];
+      if (!match[3]) index += 2;
+      if (path) record(path, statuses.get(path) ?? "M", Number(match[1]) || 0, Number(match[2]) || 0, committed);
     }
     for (const [path, code] of statuses) if (!files.has(path)) record(path, code, 0, 0, committed);
   };
@@ -132,7 +154,8 @@ function changedFiles(mergeBase, cwd) {
     try { lines = readFileSync(join(cwd, path), "utf8").split("\n").length - 1; } catch { /* unreadable: leave the count at zero */ }
     record(path, "A", lines, 0, false);
   }
-  return [...files.values()].map((file) => ({ ...file, kind: classify(file.path) })).sort((a, b) => a.path.localeCompare(b.path));
+  return [...files.values()].map((file) => ({ ...file, kind: classify(file.path) })).sort((a, b) => a.path.localeCompare(b.path))
+    .map((file) => (file.status === "M" && file.removed >= SUBSTANTIAL_REMOVAL && file.kind !== "generated" ? { ...file, lost: removedLandmarks(mergeBase, file.path, cwd) } : file));
 }
 
 const CHEAP = /^(lint|eslint|stylelint|typecheck|type-check|types|tsc|check|check-types|validate|format:check|prettier:check|test|test:unit|unit|vitest|jest)(:|$)/;
@@ -228,6 +251,7 @@ export function reviewScope({ requested = "", cwd = process.cwd(), usePullReques
     root, head, branch, base, files, packages,
     ci: ciChecks(root), other: otherChecks(root),
     commits: Number(git(["rev-list", "--count", `${base.mergeBase}..HEAD`], { cwd: root })),
+    subjects: git(["log", "--format=%s", "--max-count=30", `${base.mergeBase}..HEAD`], { cwd: root }).split("\n").filter(Boolean),
     fingerprint: fingerprint(root)
   };
 }
@@ -242,6 +266,7 @@ function render(scope) {
   out.push(`- Committed diff: \`git diff ${scope.base.mergeBase.slice(0, 12)} HEAD\`; uncommitted: \`git diff HEAD\``);
   out.push(`- Worktree fingerprint: ${scope.fingerprint}`, "");
 
+  if (scope.subjects.length) out.push("## What the branch says it does", "", ...scope.subjects.map((subject) => `- ${subject}`), "", "This is the author's stated intent, and the only one. A change these commits do not account for is not intended until the code shows otherwise.", "");
   out.push("## Changed surfaces", "");
   if (scope.files.length === 0) out.push("No changes against the base. Report `No actionable findings` and say the diff is empty.");
   const labels = { production: "Production", config: "Configuration and CI", test: "Tests", docs: "Documentation", generated: "Generated and lock files (skim only)" };
@@ -256,7 +281,7 @@ function render(scope) {
       deleted.set(directory, (deleted.get(directory) ?? 0) + 1);
     }
     for (const [directory, count] of deleted) out.push(`- ${directory} [deleted${count > 1 ? `, ${count} files` : ""}] — check nothing still refers to it`);
-    for (const file of group) out.push(`- ${file.path} [${file.status} +${file.added} -${file.removed}${file.uncommitted ? ", uncommitted" : ""}]`);
+    for (const file of group) out.push(`- ${file.path} [${file.status} +${file.added} -${file.removed}${file.uncommitted ? ", uncommitted" : ""}]${file.kind !== "production" && mustAccountFor(file) ? " — substantial removal: list this file in Coverage" : ""}${file.lost?.length ? `\n  - lost and not re-added: ${file.lost.slice(0, 10).map((line) => `\`${line}\``).join(", ")}${file.lost.length > 10 ? `, and ${file.lost.length - 10} more` : ""}` : ""}`);
     out.push("");
   }
   if (scope.files.length) out.push("Classification is by path only. Reclassify a file when this repository treats it differently.", "");

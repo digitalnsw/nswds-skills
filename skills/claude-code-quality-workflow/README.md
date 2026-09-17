@@ -77,7 +77,7 @@ The report states the base, the merge base and the reason. When candidates disag
 
 The command starts by building a change-surface inventory from the diff: production files, configuration and CI, tests, documentation, and generated files. Skill, agent and prompt files count as production. The reviewer reads every changed production file in full, then the callers, consumers, tests and configuration needed to judge the consequences.
 
-The report's Coverage table lists every changed production file as assessed or as a named gap. A finding is reported only with a location, a trigger, a consequence, a fix direction, a severity and a confidence.
+The report's Coverage table lists every changed production file as assessed or as a named gap, along with any other modified file that lost 20 or more lines, because unintended removals hide in documentation, tests and CI. A finding is reported only with a location, a trigger, a consequence, a fix direction, a severity and a confidence.
 
 ### Checks
 

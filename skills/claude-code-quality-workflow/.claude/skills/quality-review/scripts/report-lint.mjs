@@ -9,7 +9,7 @@
 // rewrites its answer, and never blocks twice in a row.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { fingerprint, reviewScope } from "./review-scope.mjs";
+import { fingerprint, mustAccountFor, reviewScope } from "./review-scope.mjs";
 
 const FORBIDDEN = [
   [/\b(sorry|apologi[sz]e|apologies|you(?:'|’)re right|you are right|my mistake)\b/i, "apology"],
@@ -40,6 +40,8 @@ export function lintReport(report, { final = false, scope = null, currentFingerp
     try { JSON.parse(unfenced); problems.push("The answer is JSON. Write the report as Markdown for a human reader."); } catch { /* not JSON */ }
   }
 
+  if (!/^#{1,3}\s+\S/.test(text)) problems.push("The answer does not begin with the report title (`# Quality review: <branch>`). Remove everything before it: no preamble, narration or note about what happens next.");
+
   const findings = [...text.matchAll(/^###\s+F-?\d+\b.*$/gm)];
   const clean = /\bNo actionable findings\b/.test(text);
   if (findings.length === 0 && !clean) problems.push("The answer has neither a finding (`### F1 · <Severity> · <title>`) nor the exact phrase `No actionable findings`. A review must end in one of those two outcomes.");
@@ -65,7 +67,7 @@ export function lintReport(report, { final = false, scope = null, currentFingerp
 
   if (scope?.files && coverageAt !== -1) {
     const coverage = text.slice(coverageAt);
-    const missing = scope.files.filter((file) => file.kind === "production" && file.status !== "D").map((file) => file.path).filter((path) => {
+    const missing = scope.files.filter(mustAccountFor).map((file) => file.path).filter((path) => {
       if (coverage.includes(path)) return false;
       const parts = path.split("/");
       for (let depth = parts.length - 1; depth > 0; depth -= 1) {
@@ -74,7 +76,7 @@ export function lintReport(report, { final = false, scope = null, currentFingerp
       }
       return true;
     });
-    if (missing.length) problems.push(`The Coverage section does not account for these changed production files: ${missing.slice(0, 15).join(", ")}${missing.length > 15 ? ` and ${missing.length - 15} more` : ""}. List each as assessed, or as an unverified gap with the reason. A directory may be written as \`dir/**\`.`);
+    if (missing.length) problems.push(`The Coverage section does not account for these changed files (production files, and files with substantial removals): ${missing.slice(0, 15).join(", ")}${missing.length > 15 ? ` and ${missing.length - 15} more` : ""}. List each as assessed, or as an unverified gap with the reason. A directory may be written as \`dir/**\`.`);
   }
   if (currentFingerprint && !text.includes(currentFingerprint)) {
     problems.push(`The Coverage section does not record the closing worktree fingerprint (${currentFingerprint}). State whether it matches the opening fingerprint from the review scope.`);

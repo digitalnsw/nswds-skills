@@ -169,3 +169,18 @@ test("names what a heavily cut file lost, whatever kind of file it is", () => {
   assert.deepEqual(readme.lost, ["## Skills"]);
   assert.match(ok("node", [scopeScript], { cwd: repo }), /README\.md .*substantial removal[^\n]*\n  - lost and not re-added: `## Skills`/);
 });
+
+test("warns when the remote base has not been fetched recently", async () => {
+  const { utimesSync } = await import("node:fs");
+  const { repo, git } = makeRepo({ base: { "a.js": "1\n" }, feature: { "a.js": "2\n" } });
+  const remote = tempDir();
+  ok("git", ["clone", "-q", "--bare", repo, join(remote, "origin.git")]);
+  git("remote", "add", "origin", join(remote, "origin.git"));
+  git("fetch", "-q", "origin");
+  git("remote", "set-head", "origin", "main");
+  assert.doesNotMatch(ok("node", [scopeScript], { cwd: repo }), /Base freshness/);
+  const old = new Date(Date.now() - 5 * 86400000);
+  utimesSync(join(repo, ".git", "FETCH_HEAD"), old, old);
+  assert.equal(scope(repo).fetchedDaysAgo, 5);
+  assert.match(ok("node", [scopeScript], { cwd: repo }), /Base freshness: origin\/main was last fetched 5 days ago/);
+});

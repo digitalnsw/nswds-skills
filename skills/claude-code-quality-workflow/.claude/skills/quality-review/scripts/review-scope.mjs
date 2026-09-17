@@ -4,7 +4,7 @@
 // Read-only: runs git queries (and `gh pr view` when available), writes nothing.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -233,6 +233,18 @@ export function fingerprint(cwd = process.cwd()) {
   return hash.digest("hex").slice(0, 12);
 }
 
+// A review never fetches. When the base is a remote-tracking ref that has not
+// been fetched for a while, say so: a stale base pulls merged work into the diff.
+function fetchAge(root, ref) {
+  if (!/^(origin|upstream)\//.test(ref)) return null;
+  try {
+    const gitDirectory = git(["rev-parse", "--absolute-git-dir"], { cwd: root });
+    const common = git(["rev-parse", "--git-common-dir"], { cwd: root });
+    const marker = [join(gitDirectory, "FETCH_HEAD"), join(root, common, "FETCH_HEAD"), join(common, "FETCH_HEAD")].find((path) => existsSync(path));
+    return marker ? Math.floor((Date.now() - statSync(marker).mtimeMs) / 86400000) : null;
+  } catch { return null; }
+}
+
 export function reviewScope({ requested = "", cwd = process.cwd(), usePullRequest = true } = {}) {
   const root = git(["rev-parse", "--show-toplevel"], { cwd });
   const head = git(["rev-parse", "HEAD"], { cwd: root });
@@ -252,7 +264,8 @@ export function reviewScope({ requested = "", cwd = process.cwd(), usePullReques
     ci: ciChecks(root), other: otherChecks(root),
     commits: Number(git(["rev-list", "--count", `${base.mergeBase}..HEAD`], { cwd: root })),
     subjects: git(["log", "--format=%s", "--max-count=30", `${base.mergeBase}..HEAD`], { cwd: root }).split("\n").filter(Boolean),
-    fingerprint: fingerprint(root)
+    fingerprint: fingerprint(root),
+    fetchedDaysAgo: fetchAge(root, base.ref)
   };
 }
 
@@ -262,6 +275,7 @@ function render(scope) {
   out.push(`- Branch: ${scope.branch} @ ${scope.head.slice(0, 12)}`);
   out.push(`- Base: ${scope.base.ref} (${scope.base.reason})`);
   if (scope.base.assumption) out.push(`- Base assumption: ${scope.base.assumption}`);
+  if (scope.fetchedDaysAgo >= 2) out.push(`- Base freshness: ${scope.base.ref} was last fetched ${scope.fetchedDaysAgo} days ago. The review does not fetch; if the diff below contains work that has already merged, say so under Base selection and recommend \`git fetch\`.`);
   out.push(`- Merge base: ${scope.base.mergeBase.slice(0, 12)} (${scope.commits} commit${scope.commits === 1 ? "" : "s"} on this branch)`);
   out.push(`- Committed diff: \`git diff ${scope.base.mergeBase.slice(0, 12)} HEAD\`; uncommitted: \`git diff HEAD\``);
   out.push(`- Worktree fingerprint: ${scope.fingerprint}`, "");

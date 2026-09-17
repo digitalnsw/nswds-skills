@@ -71,7 +71,7 @@ You are never asked for a branch or a commit. The base is the first of these tha
 3. the remote's default branch (`origin/HEAD`, then `upstream/HEAD`);
 4. whichever of `main`, `master`, `trunk`, `develop` has the merge base nearest to `HEAD`.
 
-The report states the base, the merge base and the reason. When candidates disagree, it states the assumption. The review covers every commit since the merge base, plus uncommitted and untracked changes. The review stops without a report only when the repository has none of these branches.
+The report states the base, the merge base and the reason. When candidates disagree, it states the assumption. The review never fetches; when the remote base was last fetched two or more days ago, the report says so. The review covers every commit since the merge base, plus uncommitted and untracked changes. The review stops without a report only when the repository has none of these branches.
 
 ### What the review covers
 

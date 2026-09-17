@@ -1,3 +1,9 @@
+## [1.1.0](https://github.com/digitalnsw/nswds-skills/compare/v1.0.0...v1.1.0) (2026-09-17)
+
+### Features
+
+* replace quality workflows with stateless review tools ([#14](https://github.com/digitalnsw/nswds-skills/issues/14)) ([38e5465](https://github.com/digitalnsw/nswds-skills/commit/38e5465e0d62b793f8f15184fea42cab8b31319a))
+
 ## 1.0.0 (2026-09-16)
 
 ### Features

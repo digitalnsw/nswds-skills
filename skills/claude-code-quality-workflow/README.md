@@ -103,7 +103,9 @@ Sonnet is the default because the work is mostly reading and tracing with a fixe
 ./install.sh --model opus
 ```
 
-That rewrites the `model:` line of the two review commands at install time. Run `./install.sh` without the flag to go back. To pay for the larger model on one review only, leave the default installed and ask for a focused second pass: `/quality-review concentrate on src/auth` after switching the session model has no effect, because the command pins its own model; use `--model inherit` at install time if you prefer the commands to follow the session.
+That rewrites the `model:` line of the two review commands at install time. Run `./install.sh` without the flag to go back to Sonnet.
+
+Because the commands pin their own model, changing the session model does not change the reviewer. To make the commands follow whatever model the session uses, install with `--model inherit`.
 
 ## Limits
 

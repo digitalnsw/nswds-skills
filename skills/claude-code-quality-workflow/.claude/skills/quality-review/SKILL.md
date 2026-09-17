@@ -18,9 +18,13 @@ hooks:
 
 Review the current branch now, in this conversation, and end this turn with the finished report. This command is read-only: do not create, edit, format, stage, commit, stash or delete anything, and do not delegate to other agents.
 
-!`node ${CLAUDE_SKILL_DIR}/scripts/review-scope.mjs --skill "$ARGUMENTS"`
+!`node ${CLAUDE_SKILL_DIR}/scripts/review-scope.mjs --skill`
 
-The output above is the review scope followed by the review guide. If it is missing, run `node ${CLAUDE_SKILL_DIR}/scripts/review-scope.mjs --skill` yourself to get both. The base is already chosen: never ask the user for a branch or a commit unless the scope says no base could be established.
+User's argument for this review (may be empty): $ARGUMENTS
+
+When the argument names a branch, that branch is the base: run `node ${CLAUDE_SKILL_DIR}/scripts/review-scope.mjs --skill <branch>` once and use that scope instead of the one above. Treat any other argument as what to concentrate on; it never reduces the coverage table.
+
+The output above is the review scope followed by the review guide. If it is missing, run that command yourself to get both. The base is already chosen: never ask the user for a branch or a commit unless the scope says no base could be established.
 
 Helper commands:
 

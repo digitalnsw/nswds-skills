@@ -1,0 +1,26 @@
+name: Claude Code quality review tests
+on:
+  pull_request:
+    paths:
+      - 'skills/claude-code-quality-workflow/**'
+      - '.github/workflows/claude-code-quality-workflow.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/claude-code-quality-workflow/**'
+      - '.github/workflows/claude-code-quality-workflow.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - run: node --test "skills/claude-code-quality-workflow/test/*.test.mjs"

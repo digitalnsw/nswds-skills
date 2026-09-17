@@ -143,6 +143,7 @@ test("skill mode carries the review guide, and the commands inject nothing else"
   for (const name of ["quality-review", "final-review"]) {
     const injections = readFileSync(join(scripts, "..", "..", name, "SKILL.md"), "utf8").match(/^!`.*`$/gm) ?? [];
     assert.equal(injections.length, 1, name);
-    assert.match(injections[0], /^!`node \$\{CLAUDE_SKILL_DIR\}\S*\/scripts\/review-scope\.mjs --skill "\$ARGUMENTS"`$/);
+    // User text never reaches the shell: a quote in it would break the injection.
+    assert.match(injections[0], /^!`node \$\{CLAUDE_SKILL_DIR\}\S*\/scripts\/review-scope\.mjs --skill`$/);
   }
 });

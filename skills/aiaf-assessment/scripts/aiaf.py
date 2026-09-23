@@ -32,6 +32,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+import zlib
 from xml.etree import ElementTree
 from xml.sax.saxutils import escape
 
@@ -64,6 +65,9 @@ MAX_PARTS = 2000
 MAX_PART_SIZE = 50 * 1024 * 1024
 MAX_TOTAL_SIZE = 200 * 1024 * 1024
 MAX_RATIO = 200
+# zipfile reads the whole central directory when a file is opened, one record of at least
+# 46 bytes per part, so its size is checked first. The official workbook's is under 10 KB.
+MAX_CENTRAL_DIRECTORY = 1024 * 1024
 
 
 class WorkbookError(Exception):
@@ -121,9 +125,35 @@ def check_limits(infos):
         raise WorkbookError(f"workbook is {total} bytes unpacked; refusing more than {MAX_TOTAL_SIZE}")
 
 
-def parse_xml(data):
+def check_archive(path):
+    """Read the ZIP end record before zipfile builds its list of parts, and refuse archives
+    whose central directory is too large, so a crafted part count cannot exhaust memory."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            f.seek(max(0, size - 65557))
+            tail = f.read()
+    except OSError as e:
+        raise WorkbookError(f"{path} could not be read: {e}")
+    end = tail.rfind(b"PK\x05\x06")
+    if end < 0 or len(tail) - end < 22:
+        raise WorkbookError(f"{path} is not an Excel workbook: no ZIP end record")
+    parts = int.from_bytes(tail[end + 10:end + 12], "little")
+    directory = int.from_bytes(tail[end + 12:end + 16], "little")
+    if parts == 0xFFFF or directory == 0xFFFFFFFF or (end >= 20 and tail[end - 20:end - 16] == b"PK\x06\x07"):
+        raise WorkbookError(f"{path} is a ZIP64 archive, which an Excel workbook of this size never needs")
+    if parts > MAX_PARTS:
+        raise WorkbookError(f"workbook has {parts} parts; refusing more than {MAX_PARTS}")
+    if directory > MAX_CENTRAL_DIRECTORY:
+        raise WorkbookError(f"workbook's ZIP directory is {directory} bytes; refusing more than {MAX_CENTRAL_DIRECTORY}")
+
+
+def parse_xml(data, name):
     """Parse a workbook part already screened by Workbook.read."""
-    return ElementTree.fromstring(data)
+    try:
+        return ElementTree.fromstring(data)
+    except ElementTree.ParseError as e:
+        raise WorkbookError(f"{name} is not valid XML: {e}") from e
 
 
 def rich_text(node):
@@ -143,35 +173,43 @@ class Workbook:
 
     def __init__(self, path):
         self.path = path
+        check_archive(path)
         try:
             self.zip = zipfile.ZipFile(path)
         except (OSError, zipfile.BadZipFile) as e:
             raise WorkbookError(f"{path} is not an Excel workbook: {e}")
         try:
             check_limits(self.zip.infolist())
-        except WorkbookError:
+            self.sheet_paths = self._sheet_paths()
+            self.shared = self._shared_strings()
+        except BaseException:
             self.zip.close()
             raise
-        self.sheet_paths = self._sheet_paths()
-        self.shared = self._shared_strings()
 
     def close(self):
         self.zip.close()
 
+    def raw(self, part):
+        """A package part's bytes, by name or ZipInfo. Corrupt data is a WorkbookError."""
+        name = getattr(part, "filename", part)
+        try:
+            return self.zip.read(part)
+        except KeyError:
+            raise WorkbookError(f"workbook part missing: {name}")
+        except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError) as e:
+            raise WorkbookError(f"workbook part {name} is corrupt: {e}") from e
+
     def read(self, name):
         """A package part. Spreadsheet XML never declares a DTD, so refusing one blocks
         entity-expansion and external-entity attacks from a crafted workbook."""
-        try:
-            data = self.zip.read(name)
-        except KeyError:
-            raise WorkbookError(f"workbook part missing: {name}")
+        data = self.raw(name)
         if re.search(rb"<!\s*(DOCTYPE|ENTITY)", data, re.I):
             raise WorkbookError(f"{name} declares a DTD or entities; refusing to read it")
         return data
 
     def _sheet_paths(self):
-        book = parse_xml(self.read("xl/workbook.xml"))
-        rels = parse_xml(self.read("xl/_rels/workbook.xml.rels"))
+        book = parse_xml(self.read("xl/workbook.xml"), "xl/workbook.xml")
+        rels = parse_xml(self.read("xl/_rels/workbook.xml.rels"), "xl/_rels/workbook.xml.rels")
         targets = {r.get("Id"): r.get("Target") for r in rels.iter(f"{PKG_REL}Relationship")}
         paths = {}
         for sheet in book.iter(f"{MAIN}sheet"):
@@ -182,7 +220,7 @@ class Workbook:
     def _shared_strings(self):
         if "xl/sharedStrings.xml" not in self.zip.namelist():
             return []
-        root = parse_xml(self.read("xl/sharedStrings.xml"))
+        root = parse_xml(self.read("xl/sharedStrings.xml"), "xl/sharedStrings.xml")
         return [rich_text(si) for si in root.iter(f"{MAIN}si")]
 
     def sheet_part(self, name):
@@ -192,7 +230,7 @@ class Workbook:
 
     def cells(self, name):
         """{ 'A1': value } for every cell with a value."""
-        root = parse_xml(self.read(self.sheet_part(name)))
+        root = parse_xml(self.read(self.sheet_part(name)), self.sheet_part(name))
         values = {}
         for c in root.iter(f"{MAIN}c"):
             kind = c.get("t")
@@ -404,7 +442,7 @@ def fill(template, answers_path, out_path):
         try:
             with zipfile.ZipFile(tmp, "w") as out:
                 for info in book.zip.infolist():
-                    data_bytes = edits[info.filename].encode("utf-8") if info.filename in edits else book.zip.read(info)
+                    data_bytes = edits[info.filename].encode("utf-8") if info.filename in edits else book.raw(info)
                     out.writestr(info, data_bytes, compress_type=info.compress_type)
             os.replace(tmp, out_path)
         except BaseException:

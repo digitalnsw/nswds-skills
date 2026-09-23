@@ -226,6 +226,62 @@ class AiafTest(unittest.TestCase):
         with self.assertRaises(aiaf.WorkbookError):
             aiaf.check_limits([zipfile.ZipInfo(f"p{i}") for i in range(aiaf.MAX_PARTS + 1)])
 
+    def test_checks_the_zip_directory_before_zipfile_reads_it(self):
+        many = os.path.join(self.dir.name, "many.xlsx")
+        with zipfile.ZipFile(many, "w") as z:
+            for i in range(aiaf.MAX_PARTS + 1):
+                z.writestr(f"p{i}", b"")
+
+        def ended(parts, directory):
+            path = os.path.join(self.dir.name, f"end-{parts}-{directory}.xlsx")
+            with open(path, "wb") as f:
+                f.write(b"PK\x05\x06" + bytes(4) + parts.to_bytes(2, "little") * 2
+                        + directory.to_bytes(4, "little") + bytes(6))
+            return path
+
+        real_zipfile = aiaf.zipfile.ZipFile
+        aiaf.zipfile.ZipFile = lambda *a, **k: self.fail("zipfile opened a package that should be refused first")
+        try:
+            for path, message in [(many, f"{aiaf.MAX_PARTS + 1} parts"),
+                                  (ended(3, aiaf.MAX_CENTRAL_DIRECTORY + 1), "ZIP directory is"),
+                                  (ended(0xFFFF, 10), "ZIP64"),
+                                  (self.write_answers({}), "no ZIP end record")]:
+                with self.assertRaisesRegex(aiaf.WorkbookError, message):
+                    aiaf.Workbook(path)
+        finally:
+            aiaf.zipfile.ZipFile = real_zipfile
+
+    def rewrite_part(self, name, change, stored=False):
+        path = os.path.join(self.dir.name, "changed.xlsx")
+        with zipfile.ZipFile(self.template) as src, zipfile.ZipFile(path, "w") as out:
+            for info in src.infolist():
+                data = src.read(info)
+                if info.filename == name:
+                    data = change(data)
+                out.writestr(info.filename, data, zipfile.ZIP_STORED if stored else zipfile.ZIP_DEFLATED)
+        return path
+
+    def test_reports_malformed_xml_cleanly(self):
+        path = self.rewrite_part("xl/sharedStrings.xml", lambda data: data.replace(b"</sst>", b""))
+        code, _, err = self.run_cli("questions", "--workbook", path)
+        self.assertEqual(code, 1)
+        self.assertIn("error: xl/sharedStrings.xml is not valid XML", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_reports_corrupt_compressed_data_cleanly(self):
+        path = self.rewrite_part("xl/sharedStrings.xml", lambda data: data, stored=True)
+        with open(path, "rb") as f:
+            body = f.read()
+        with open(path, "wb") as f:
+            f.write(body.replace(b"Which lifecycle phase?", b"Which lifecycle phasX?"))
+        code, _, err = self.run_cli("questions", "--workbook", path)
+        self.assertEqual(code, 1)
+        self.assertIn("error: workbook part xl/sharedStrings.xml is corrupt", err)
+        code, _, err = self.run_cli("fill", "--workbook", path, "--answers", self.write_answers(GOOD),
+                                    "--out", os.path.join(self.dir.name, "out.xlsx"))
+        self.assertEqual(code, 1)
+        self.assertIn("is corrupt", err)
+
     def test_rejects_unknown_tags(self):
         book = aiaf.Workbook(self.template)
         try:

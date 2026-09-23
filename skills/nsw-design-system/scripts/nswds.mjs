@@ -132,9 +132,15 @@ export function installedVersion(cwd = process.cwd()) {
   return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')).version : null
 }
 
-async function resolveVersion(requested) {
+// Pages load the release from jsDelivr, which serves npm, while the kit comes from the
+// GitHub release tag, so the default must be a version both have published.
+export async function resolveVersion(requested) {
   if (requested) return normaliseVersion(requested)
   const latest = await latestVersions()
+  if (latest.release && latest.npm && latest.release !== latest.npm) {
+    throw new Error(`the latest GitHub release (v${latest.release}) and npm (v${latest.npm}) differ; `
+      + 'confirm which to use and pass it with --version')
+  }
   if (latest.release) return latest.release
   if (latest.npm) {
     console.error(`warning: GitHub release lookup failed (${latest.errors.join('; ')}); using npm latest v${latest.npm}`)

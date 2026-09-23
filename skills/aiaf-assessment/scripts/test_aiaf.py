@@ -7,6 +7,7 @@ import json
 import os
 import re
 import tempfile
+import types
 import unittest
 import zipfile
 from contextlib import redirect_stderr, redirect_stdout
@@ -322,12 +323,38 @@ class DownloadTest(unittest.TestCase):
 
     def test_requires_https_on_a_nsw_gov_au_site(self):
         for href, message in [(b"http://www.digital.nsw.gov.au/a.xlsx", "insecure"),
-                              (b"https://example.org/aiaf.xlsx", "not on a nsw.gov.au site")]:
+                              (b"https://example.org/aiaf.xlsx", "not a nsw.gov.au site")]:
             self.page = b'<a href="' + href + b'">x</a>'
             with self.assertRaisesRegex(aiaf.WorkbookError, message):
                 aiaf.download(self.out)
-        with self.assertRaisesRegex(aiaf.WorkbookError, "insecure"):
-            aiaf.HttpsOnlyRedirects().redirect_request(None, None, 302, "Found", {}, "http://www.digital.nsw.gov.au/a.xlsx")
+        for newurl, message in [("http://www.digital.nsw.gov.au/a.xlsx", "insecure"),
+                                ("https://example.org/a.xlsx", "not a nsw.gov.au site"),
+                                ("https://nsw.gov.au.example.org/a.xlsx", "not a nsw.gov.au site")]:
+            with self.assertRaisesRegex(aiaf.WorkbookError, message):
+                aiaf.TrustedRedirects().redirect_request(None, None, 302, "Found", {}, newurl)
+
+
+class CurlFallbackTest(unittest.TestCase):
+    """The curl fallback accepts a response only if its final URL is trusted."""
+
+    def setUp(self):
+        self.real_run, self.real_which = aiaf.subprocess.run, aiaf.shutil.which
+        aiaf.shutil.which = lambda name: "/usr/bin/curl"
+
+    def tearDown(self):
+        aiaf.subprocess.run, aiaf.shutil.which = self.real_run, self.real_which
+
+    def respond(self, stdout):
+        aiaf.subprocess.run = lambda args, **kwargs: types.SimpleNamespace(returncode=0, stdout=stdout, stderr=b"")
+
+    def test_returns_the_body_when_the_final_url_is_trusted(self):
+        self.respond(b"line one\nline two\n\nhttps://www.digital.nsw.gov.au/a.xlsx")
+        self.assertEqual(aiaf.curl_fetch("https://www.digital.nsw.gov.au/a.xlsx", 5, "test"), b"line one\nline two\n")
+
+    def test_rejects_a_redirect_to_another_host(self):
+        self.respond(b"tampered\nhttps://attacker.example.org/a.xlsx")
+        with self.assertRaisesRegex(aiaf.WorkbookError, "not a nsw.gov.au site"):
+            aiaf.curl_fetch("https://www.digital.nsw.gov.au/a.xlsx", 5, "test")
 
 
 @unittest.skipUnless(os.environ.get("AIAF_WORKBOOK"), "set AIAF_WORKBOOK to test the official workbook")

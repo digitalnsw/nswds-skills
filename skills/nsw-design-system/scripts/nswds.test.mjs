@@ -5,13 +5,23 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { crc32, deflateRawSync } from 'node:zlib'
+import { deflateRawSync } from 'node:zlib'
 import {
   cachedVersions, checkPage, cssClasses, examplesOf, extractKit, guidanceOf, kitVersion,
-  listKit, loadRules, readZip, standaloneTemplate, styleKey, themeOnly,
+  listKit, loadRules, readZip, resolveVersion, standaloneTemplate, styleKey, themeOnly,
 } from './nswds.mjs'
 
 const script = fileURLToPath(new URL('./nswds.mjs', import.meta.url))
+
+// zlib.crc32 needs Node 20.15 or later; the skill supports Node 18.
+function crc32(data) {
+  let crc = 0xffffffff
+  for (const byte of data) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1))
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
 
 function zip(files) {
   const locals = []
@@ -284,6 +294,25 @@ test('escapes the template title', () => {
   const { html } = standaloneTemplate(hostile, '9.1.0')
   assert.match(html, /<title>A &lt;\/title&gt;&lt;script&gt;alert\(1\)&lt;\/script&gt;<\/title>/)
   assert.doesNotMatch(html, /<script>alert/)
+})
+
+test('the default version must be published on both GitHub and npm', async () => {
+  const realFetch = globalThis.fetch
+  const serve = (release, npm) => {
+    globalThis.fetch = async (url) => {
+      const body = String(url).includes('api.github.com') ? { tag_name: `v${release}` } : { version: npm }
+      return { ok: true, status: 200, json: async () => body }
+    }
+  }
+  try {
+    serve('9.1.0', '9.1.0')
+    assert.equal(await resolveVersion(), '9.1.0')
+    serve('9.2.0', '9.1.0')
+    await assert.rejects(resolveVersion(), /GitHub release \(v9\.2\.0\) and npm \(v9\.1\.0\) differ; confirm which to use and pass it with --version/)
+    assert.equal(await resolveVersion('v9.1.0'), '9.1.0', 'an explicit version is used as given')
+  } finally {
+    globalThis.fetch = realFetch
+  }
 })
 
 test('command line works offline from the cache and fails on violations', () => withKit((kit, root) => {

@@ -415,39 +415,52 @@ def fill(template, answers_path, out_path):
         book.close()
 
 
-def require_https(url):
-    if urllib.parse.urlparse(url).scheme != "https":
+def require_trusted(url):
+    """Only HTTPS URLs on a nsw.gov.au host are fetched, including every redirect."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https":
         raise WorkbookError(f"refusing to download over an insecure connection: {url}")
+    if not WORKBOOK_HOST.search(parsed.hostname or ""):
+        raise WorkbookError(f"refusing to download from a host that is not a nsw.gov.au site: {url}")
 
 
-class HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+class TrustedRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        require_https(newurl)
+        require_trusted(newurl)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def fetch(url, timeout):
     """GET a URL. Falls back to the system curl (which still verifies certificates) when
     this Python has no CA bundle, as with a python.org install on macOS."""
-    require_https(url)
+    require_trusted(url)
     request = urllib.request.Request(url, headers={"User-Agent": "nswds-skills"})
     try:
-        with urllib.request.build_opener(HttpsOnlyRedirects).open(request, timeout=timeout) as response:
-            require_https(response.geturl())
+        with urllib.request.build_opener(TrustedRedirects).open(request, timeout=timeout) as response:
+            require_trusted(response.geturl())
             return response.read()
     except urllib.error.URLError as e:
         if not isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
             raise
-        curl = shutil.which("curl")
-        if not curl:
-            raise WorkbookError(f"Python cannot verify HTTPS certificates ({e.reason}). Install its certificates "
-                                f"or download the workbook yourself from {PAGE_URL}")
-        result = subprocess.run([curl, "--fail", "--silent", "--show-error", "--location", "--proto", "=https", "--proto-redir", "=https",
-                                 "--max-time", str(timeout), "--user-agent", "nswds-skills", url],
-                                capture_output=True, check=False)
-        if result.returncode:
-            raise WorkbookError(f"could not download {url}: {result.stderr.decode(errors='replace').strip()}")
-        return result.stdout
+        return curl_fetch(url, timeout, e.reason)
+
+
+def curl_fetch(url, timeout, reason):
+    curl = shutil.which("curl")
+    if not curl:
+        raise WorkbookError(f"Python cannot verify HTTPS certificates ({reason}). Install its certificates "
+                            f"or download the workbook yourself from {PAGE_URL}")
+    # curl cannot check each redirect's host, so it reports the final URL after the body and
+    # only that response is used; it must pass the same check as every other URL.
+    result = subprocess.run([curl, "--fail", "--silent", "--show-error", "--location", "--max-redirs", "5",
+                             "--proto", "=https", "--proto-redir", "=https", "--max-time", str(timeout),
+                             "--user-agent", "nswds-skills", "--write-out", "\n%{url_effective}", url],
+                            capture_output=True, check=False)
+    if result.returncode:
+        raise WorkbookError(f"could not download {url}: {result.stderr.decode(errors='replace').strip()}")
+    body, _, final = result.stdout.rpartition(b"\n")
+    require_trusted(final.decode("utf-8", "replace"))
+    return body
 
 
 def download(directory):
@@ -460,9 +473,7 @@ def download(directory):
         raise WorkbookError(f"no .xlsx download found on {PAGE_URL}; the page has changed")
     url = urllib.parse.urljoin(PAGE_URL, links[0])
     parsed = urllib.parse.urlparse(url)
-    require_https(url)
-    if not WORKBOOK_HOST.search(parsed.hostname or ""):
-        raise WorkbookError(f"workbook link is not on a nsw.gov.au site: {url}")
+    require_trusted(url)
     name = os.path.basename(urllib.parse.unquote(parsed.path))
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._ -]*\.xlsx", name):
         raise WorkbookError(f"unexpected download file name {name!r} on {PAGE_URL}")

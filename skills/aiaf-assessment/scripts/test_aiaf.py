@@ -187,6 +187,44 @@ class AiafTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("must be a new file", err)
 
+    def test_reports_wrongly_shaped_answers_instead_of_crashing(self):
+        out = os.path.join(self.dir.name, "filled.xlsx")
+        for bad, message in [({"answers": [], "meta": {}}, "'answers' must be an object"),
+                             ({"answers": GOOD["answers"], "meta": "x"}, "'meta' must be an object"),
+                             ([], "must be a JSON object")]:
+            code, _, err = self.run_cli("fill", "--workbook", self.template, "--answers", self.write_answers(bad), "--out", out)
+            self.assertEqual(code, 1, err)
+            self.assertIn(message, err)
+
+    def test_requires_a_zero_padded_date(self):
+        book = aiaf.Workbook(self.template)
+        try:
+            questions = aiaf.load_questions(book)[0]
+        finally:
+            book.close()
+        for value in ["1/2/2026", "01/2/2026", "01/02/26", "2026-02-01", "01/02/2026x", "31/02/2026"]:
+            _, _, errors = aiaf.validate({"answers": GOOD["answers"], "meta": {"date_completed": value}}, questions)
+            self.assertTrue(any("dd/mm/yyyy" in e for e in errors), value)
+        _, meta, errors = aiaf.validate({"answers": GOOD["answers"], "meta": {"date_completed": "01/02/2026"}}, questions)
+        self.assertEqual((errors, meta["date_completed"]), ([], "01/02/2026"))
+
+    def test_forces_recalculation_whatever_calcpr_says(self):
+        self.assertEqual(aiaf.force_recalc('<workbook><calcPr calcId="1" fullCalcOnLoad="0"/></workbook>'),
+                         '<workbook><calcPr fullCalcOnLoad="1" calcId="1"/></workbook>')
+        self.assertEqual(aiaf.force_recalc("<workbook><calcPr fullCalcOnLoad='false' calcId=\"1\"></calcPr></workbook>"),
+                         '<workbook><calcPr fullCalcOnLoad="1" calcId="1"></calcPr></workbook>')
+        self.assertEqual(aiaf.force_recalc("<workbook></workbook>"), '<workbook><calcPr fullCalcOnLoad="1"/></workbook>')
+
+    def test_refuses_oversized_or_highly_compressed_packages(self):
+        big = os.path.join(self.dir.name, "big.xlsx")
+        with zipfile.ZipFile(big, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr("xl/workbook.xml", b"0" * (3 * 1024 * 1024))
+        code, _, err = self.run_cli("questions", "--workbook", big)
+        self.assertEqual(code, 1)
+        self.assertIn("compressed more than 200:1", err)
+        with self.assertRaises(aiaf.WorkbookError):
+            aiaf.check_limits([zipfile.ZipInfo(f"p{i}") for i in range(aiaf.MAX_PARTS + 1)])
+
     def test_rejects_unknown_tags(self):
         book = aiaf.Workbook(self.template)
         try:
@@ -230,6 +268,66 @@ class AiafTest(unittest.TestCase):
     def test_expands_cell_ranges(self):
         self.assertEqual(aiaf.expand_sqref("E3 E18:E20 A1:B1"), ["E3", "E18", "E19", "E20", "A1", "B1"])
         self.assertEqual(aiaf.col_letters(aiaf.col_number("AB")), "AB")
+
+
+class DownloadTest(unittest.TestCase):
+    """download() with the network replaced by fixed responses."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.workbook = os.path.join(self.dir.name, "fixture.xlsx")
+        build_workbook(self.workbook)
+        with open(self.workbook, "rb") as f:
+            self.body = f.read()
+        self.page = b'<a href="/sites/default/files/aiaf-tool.xlsx">Excel</a>'
+        self.real_fetch = aiaf.fetch
+        aiaf.fetch = lambda url, timeout: self.page if url == aiaf.PAGE_URL else self.body
+        self.out = os.path.join(self.dir.name, "out")
+
+    def tearDown(self):
+        aiaf.fetch = self.real_fetch
+        self.dir.cleanup()
+
+    def test_downloads_validates_and_refreshes(self):
+        path, url, unchanged = aiaf.download(self.out)
+        self.assertEqual((os.path.basename(path), unchanged), ("aiaf-tool.xlsx", False))
+        self.assertEqual(url, "https://www.digital.nsw.gov.au/sites/default/files/aiaf-tool.xlsx")
+        self.assertEqual(aiaf.download(self.out)[2], True, "a second download reports the file unchanged")
+        with open(path, "wb") as f:
+            f.write(b"corrupt")
+        aiaf.download(self.out)
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), self.body, "a corrupt or stale copy is replaced")
+        self.assertEqual(sorted(os.listdir(self.out)), ["aiaf-tool.xlsx"], "no temporary files are left behind")
+
+    def test_rejects_an_invalid_download_and_keeps_nothing(self):
+        self.body = b"not a workbook"
+        with self.assertRaises(aiaf.WorkbookError):
+            aiaf.download(self.out)
+        self.assertEqual(os.listdir(self.out), [])
+
+    def test_does_not_write_through_links(self):
+        os.makedirs(self.out)
+        target = os.path.join(self.dir.name, "elsewhere.txt")
+        with open(target, "w") as f:
+            f.write("keep")
+        os.symlink(target, os.path.join(self.out, "aiaf-tool.xlsx"))
+        with self.assertRaisesRegex(aiaf.WorkbookError, "not a regular file"):
+            aiaf.download(self.out)
+        os.symlink(target, os.path.join(self.out, "aiaf-tool.xlsx.part"))
+        os.remove(os.path.join(self.out, "aiaf-tool.xlsx"))
+        aiaf.download(self.out)
+        with open(target) as f:
+            self.assertEqual(f.read(), "keep", "a planted .part link is never written through")
+
+    def test_requires_https_on_a_nsw_gov_au_site(self):
+        for href, message in [(b"http://www.digital.nsw.gov.au/a.xlsx", "insecure"),
+                              (b"https://example.org/aiaf.xlsx", "not on a nsw.gov.au site")]:
+            self.page = b'<a href="' + href + b'">x</a>'
+            with self.assertRaisesRegex(aiaf.WorkbookError, message):
+                aiaf.download(self.out)
+        with self.assertRaisesRegex(aiaf.WorkbookError, "insecure"):
+            aiaf.HttpsOnlyRedirects().redirect_request(None, None, 302, "Found", {}, "http://www.digital.nsw.gov.au/a.xlsx")
 
 
 @unittest.skipUnless(os.environ.get("AIAF_WORKBOOK"), "set AIAF_WORKBOOK to test the official workbook")

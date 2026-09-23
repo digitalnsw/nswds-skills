@@ -158,6 +158,7 @@ const decode = (text) => text
   .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
   .replace(/&#0?39;/g, "'").replace(/&rsquo;/g, '’').replace(/&lsquo;/g, '‘').replace(/&ldquo;/g, '“')
   .replace(/&rdquo;/g, '”').replace(/&ndash;/g, '–').replace(/&mdash;/g, '—').replace(/&amp;/g, '&')
+const escapeHtml = (text) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const textOf = (html) => decode(html.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim()
 
 const titleOf = (html, fallback) => textOf(html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/)?.[1] ?? fallback)
@@ -271,7 +272,7 @@ ${htmlTag}
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${title}</title>
+  <title>${escapeHtml(title)}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 ${fonts.map((f) => `  ${f}`).join('\n')}
@@ -292,8 +293,17 @@ export function cssClasses(css) {
   return new Set([...stripped.matchAll(/\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g)].map((m) => m[1]))
 }
 
-const classAttr = /\sclass\s*=\s*("([^"]*)"|'([^']*)')/g
-const styleAttr = /<[a-z][^>]*?\sstyle\s*=\s*("([^"]*)"|'([^']*)')/gi
+// Attribute names are case-insensitive and values may be double-quoted, single-quoted or unquoted.
+const VALUE = String.raw`\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>\x60]+))`
+const classAttr = new RegExp(String.raw`\sclass${VALUE}`, 'gi')
+const styleAttr = new RegExp(String.raw`<[a-z][^>]*?\sstyle${VALUE}`, 'gi')
+const valueOf = (m) => m[1] ?? m[2] ?? m[3] ?? ''
+const attr = (tag, name) => {
+  const m = tag.match(new RegExp(String.raw`\s${name}${VALUE}`, 'i'))
+  return m ? valueOf(m) : undefined
+}
+// Blank out comments, keeping line breaks so reported line numbers stay right.
+const withoutComments = (html) => html.replace(/<!--[\s\S]*?(?:-->|$)/g, (c) => c.replace(/[^\n]/g, ' '))
 export const styleKey = (value) => value.replace(/url\([^)]*\)/g, 'url()').replace(/\s+/g, ' ')
   .replace(/\s*([:;,])\s*/g, '$1').replace(/;+$/, '').trim()
 
@@ -315,11 +325,11 @@ export function loadRules(kit) {
       const path = join(dir, d.name)
       if (d.isDirectory()) walk(path, collectStyles)
       else if (d.name.endsWith('.html')) {
-        const html = readFileSync(path, 'utf8')
+        const html = withoutComments(readFileSync(path, 'utf8'))
         for (const m of html.matchAll(classAttr)) {
-          for (const name of (m[2] ?? m[3]).split(/\s+/)) if (name && !name.startsWith('nsw-docs') && !name.startsWith('hljs')) classes.add(name)
+          for (const name of valueOf(m).split(/\s+/)) if (name && !name.startsWith('nsw-docs') && !name.startsWith('hljs')) classes.add(name)
         }
-        if (collectStyles) for (const m of html.matchAll(styleAttr)) styles.add(styleKey(m[2] ?? m[3]))
+        if (collectStyles) for (const m of html.matchAll(styleAttr)) styles.add(styleKey(valueOf(m)))
       }
     }
   }
@@ -329,10 +339,18 @@ export function loadRules(kit) {
 }
 
 // Flags anything on a page that does not come from the design system release.
-export function checkPage(html, { version, classes, styles = new Set(), allowStylesheets = [], allowScripts = [] }) {
+// designSystemCss/designSystemJs name a compiled design system bundle (an npm and Sass
+// build); allowStylesheets/allowScripts name approved third-party assets, which are
+// accepted but never count as the design system itself.
+export function checkPage(source, {
+  version, classes, styles = new Set(),
+  designSystemCss = [], designSystemJs = [], allowStylesheets = [], allowScripts = [],
+}) {
+  const html = withoutComments(source)
   const issues = []
   const lineOf = (index) => html.slice(0, index).split('\n').length
   const add = (level, index, message) => issues.push({ level, line: lineOf(index), message })
+  const matches = (url, patterns) => patterns.some((p) => url.includes(p))
   const dsAsset = (url, kind) => {
     const m = url.match(/^https:\/\/cdn\.jsdelivr\.net\/npm\/nsw-design-system@([^/]+)\/dist\/(css|js)\/([a-z.]+)$/)
     if (!m || m[2] !== kind) return null
@@ -341,42 +359,49 @@ export function checkPage(html, { version, classes, styles = new Set(), allowSty
   const pinned = (index, asset) => {
     if (asset.version !== version) add('error', index, `design system asset pinned to @${asset.version}; use the exact release @${version}`)
   }
-  for (const m of html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)) {
+  for (const m of html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi)) {
     if (!themeOnly(m[1])) add('error', m.index, '<style> element: custom CSS is not allowed; only --nsw-* theming variables may be set')
   }
   for (const m of html.matchAll(styleAttr)) {
-    const value = m[2] ?? m[3]
+    const value = valueOf(m)
     if (!styles.has(styleKey(value)) && !themeOnly(`x{${value}}`)) add('error', m.index, `style attribute "${value}" is not used by the design system; use design system classes`)
   }
   let stylesheet = false
   for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
-    if (!/\brel\s*=\s*["']?stylesheet/i.test(m[0])) continue
-    const href = m[0].match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1] ?? ''
+    if (!(attr(m[0], 'rel') ?? '').toLowerCase().split(/\s+/).includes('stylesheet')) continue
+    const href = attr(m[0], 'href') ?? ''
     const asset = dsAsset(href, 'css')
     if (asset && ['main.css', 'core.css'].includes(asset.file)) { stylesheet = true; pinned(m.index, asset) }
+    else if (href && matches(href, designSystemCss)) stylesheet = true
     else if (href.startsWith('https://fonts.googleapis.com/')) continue
-    else if (allowStylesheets.some((p) => href.includes(p))) stylesheet = true
-    else add('error', m.index, `stylesheet not from the design system release: ${href}`)
+    else if (href && matches(href, allowStylesheets)) continue
+    else add('error', m.index, `stylesheet not from the design system release: ${href || '(no href)'}`)
   }
-  if (!stylesheet) add('error', 0, `no design system stylesheet; link ${cdn(version, 'css/main.css')} or pass --allow-stylesheet for your compiled design system bundle`)
+  if (!stylesheet) add('error', 0, `no design system stylesheet; link ${cdn(version, 'css/main.css')} or pass --design-system-css for your compiled design system bundle`)
   let script = false
-  for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
-    const src = m[1].match(/\bsrc\s*=\s*["']([^"']+)["']/i)?.[1]
-    if (src) {
+  let init = false
+  for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
+    const src = attr(m[1], 'src')
+    if (src !== undefined) {
       const asset = dsAsset(src, 'js')
       if (asset && ['main.js', 'main.min.js'].includes(asset.file)) { script = true; pinned(m.index, asset) }
-      else if (allowScripts.some((p) => src.includes(p))) script = true
-      else add('error', m.index, `script not from the design system release: ${src}`)
-    } else if (!/^\s*window\.NSW\.initSite\(\);?\s*$/.test(m[2]) && m[2].trim()) {
+      else if (src && matches(src, designSystemJs)) script = true
+      else if (src && matches(src, allowScripts)) continue
+      else add('error', m.index, `script not from the design system release: ${src || '(empty src)'}`)
+    } else if (/^\s*window\.NSW\.initSite\(\);?\s*$/.test(m[2])) {
+      init = true
+    } else if (m[2].trim()) {
       add('warning', m.index, 'inline script: confirm no design system component already provides this behaviour')
     }
   }
-  const init = /window\.NSW\.initSite\(\)/.test(html)
+  const classMatches = [...html.matchAll(classAttr)]
+  const hooks = classMatches.some((m) => valueOf(m).split(/\s+/).some((name) => name.startsWith('js-')))
   if (script && !init) add('error', 0, 'design system JavaScript is loaded but window.NSW.initSite() is never called')
-  if (!script && /\bclass\s*=\s*["'][^"']*\bjs-/.test(html)) add('error', 0, 'page uses js- hooks but does not load the design system JavaScript')
+  if (!script && init) add('error', 0, 'window.NSW.initSite() is called but the design system JavaScript is not loaded')
+  if (!script && hooks) add('error', 0, 'page uses js- hooks but does not load the design system JavaScript')
   const seen = new Map()
-  for (const m of html.matchAll(classAttr)) {
-    for (const name of (m[2] ?? m[3]).split(/\s+/)) {
+  for (const m of classMatches) {
+    for (const name of valueOf(m).split(/\s+/)) {
       if (!name) continue
       if (name.startsWith('nsw-docs')) add('error', m.index, `${name} is a docs-site class, not part of the design system`)
       else if (!classes.has(name) && !seen.has(name)) seen.set(name, m.index)
@@ -387,7 +412,7 @@ export function checkPage(html, { version, classes, styles = new Set(), allowSty
 }
 
 function parseArgs(argv) {
-  const options = { positional: [], allowStylesheets: [], allowScripts: [] }
+  const options = { positional: [], designSystemCss: [], designSystemJs: [], allowStylesheets: [], allowScripts: [] }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     const value = () => {
@@ -397,6 +422,8 @@ function parseArgs(argv) {
     if (arg === '--version') options.version = value()
     else if (arg === '--out') options.out = value()
     else if (arg === '--force') options.force = true
+    else if (arg === '--design-system-css') options.designSystemCss.push(value())
+    else if (arg === '--design-system-js') options.designSystemJs.push(value())
     else if (arg === '--allow-stylesheet') options.allowStylesheets.push(value())
     else if (arg === '--allow-script') options.allowScripts.push(value())
     else if (arg.startsWith('--')) throw new Error(`Unknown option ${arg}`)
@@ -417,8 +444,10 @@ const USAGE = `Usage: node nswds.mjs <command> [options]
 
 Options:
   --version <x.y.z>              use this release instead of the latest
-  --allow-stylesheet <text>      accept a stylesheet whose URL contains <text> (your compiled design system bundle)
-  --allow-script <text>          accept a script whose URL contains <text>
+  --design-system-css <text>     your compiled design system stylesheet (npm and Sass build): URL contains <text>
+  --design-system-js <text>      your bundled design system JavaScript: URL contains <text>
+  --allow-stylesheet <text>      accept an approved third-party stylesheet whose URL contains <text>
+  --allow-script <text>          accept an approved third-party script whose URL contains <text>
   --force                        let template overwrite --out`
 
 async function main(argv) {
@@ -484,7 +513,11 @@ async function main(argv) {
     const rules = loadRules(kit)
     let errors = 0
     for (const file of args) {
-      const issues = checkPage(readFileSync(file, 'utf8'), { version, ...rules, allowStylesheets: options.allowStylesheets, allowScripts: options.allowScripts })
+      const issues = checkPage(readFileSync(file, 'utf8'), {
+        version, ...rules,
+        designSystemCss: options.designSystemCss, designSystemJs: options.designSystemJs,
+        allowStylesheets: options.allowStylesheets, allowScripts: options.allowScripts,
+      })
       for (const issue of issues) console.log(`${file}:${issue.line}: ${issue.level}: ${issue.message}`)
       errors += issues.filter((i) => i.level === 'error').length
       if (!issues.length) console.log(`${file}: uses only NSW Design System v${version}`)

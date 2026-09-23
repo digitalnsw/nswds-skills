@@ -23,7 +23,7 @@ Then ask your agent to do the work. It picks the right skill for you:
 To install one skill only:
 
 ```bash
-npx skills add digitalnsw/nswds-skills --skill nsw-government-design-system
+npx skills add digitalnsw/nswds-skills --skill nsw-design-system
 ```
 
 ## Skills
@@ -32,7 +32,7 @@ npx skills add digitalnsw/nswds-skills --skill nsw-government-design-system
 
 | Skill | What it does | Try asking |
 | --- | --- | --- |
-| [nsw-government-design-system](skills/nsw-government-design-system/SKILL.md) | Builds websites, pages and components using only the [NSW Design System](https://designsystem.nsw.gov.au/), with its latest release as the single source of truth. Takes markup, page templates and guidance from the pinned release rather than from memory, and checks every page for custom CSS, invented classes and scripts that are not from the design system. Needs Node.js 18 or later. | "Build a content page for our service using the NSW Design System." |
+| [nsw-design-system](skills/nsw-design-system/SKILL.md) | Builds websites, pages and components using only the [NSW Design System](https://designsystem.nsw.gov.au/), with its latest release as the single source of truth. Takes markup, page templates and guidance from the pinned release rather than from memory, and checks every page for custom CSS, invented classes and scripts that are not from the design system. Needs Node.js 18 or later. | "Build a content page for our service using the NSW Design System." |
 | [aiaf-assessment](skills/aiaf-assessment/SKILL.md) | Drafts a [NSW AI Assessment Framework](https://www.digital.nsw.gov.au/policy/artificial-intelligence/ai-governance-assurance-and-frameworks/nsw-ai-assessment-framework) assessment. Downloads the current official workbook, chooses an answer for each question from a description of the AI system, and fills them in so Excel calculates the risk band and registers. Lists every assumption for your subject-matter experts to check. Needs Python 3.8 or later. | "Fill in the AIAF for our document summarisation tool." |
 
 ### Content and accessibility

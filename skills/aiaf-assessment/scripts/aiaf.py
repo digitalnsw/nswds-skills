@@ -56,6 +56,14 @@ QUESTION_HEADERS = {
     "version": "version",
 }
 INVALID_XML = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
+DATE = re.compile(r"\d{2}/\d{2}/\d{4}")
+WORKBOOK_HOST = re.compile(r"(^|\.)nsw\.gov\.au$")
+# The official workbook has about 70 parts and 8 MB unpacked; these limits sit far above
+# that and stop a crafted file from exhausting memory.
+MAX_PARTS = 2000
+MAX_PART_SIZE = 50 * 1024 * 1024
+MAX_TOTAL_SIZE = 200 * 1024 * 1024
+MAX_RATIO = 200
 
 
 class WorkbookError(Exception):
@@ -97,6 +105,22 @@ def expand_sqref(sqref):
     return cells
 
 
+def check_limits(infos):
+    """Refuse packages whose declared sizes are implausible for a workbook. zipfile stops
+    reading an entry at its declared size, so these limits bound what is decompressed."""
+    if len(infos) > MAX_PARTS:
+        raise WorkbookError(f"workbook has {len(infos)} parts; refusing more than {MAX_PARTS}")
+    total = 0
+    for info in infos:
+        if info.file_size > MAX_PART_SIZE:
+            raise WorkbookError(f"{info.filename} is {info.file_size} bytes unpacked; refusing parts over {MAX_PART_SIZE}")
+        if info.file_size > 1024 * 1024 and info.file_size > MAX_RATIO * max(info.compress_size, 1):
+            raise WorkbookError(f"{info.filename} is compressed more than {MAX_RATIO}:1; refusing it")
+        total += info.file_size
+    if total > MAX_TOTAL_SIZE:
+        raise WorkbookError(f"workbook is {total} bytes unpacked; refusing more than {MAX_TOTAL_SIZE}")
+
+
 def parse_xml(data):
     """Parse a workbook part already screened by Workbook.read."""
     return ElementTree.fromstring(data)
@@ -123,6 +147,11 @@ class Workbook:
             self.zip = zipfile.ZipFile(path)
         except (OSError, zipfile.BadZipFile) as e:
             raise WorkbookError(f"{path} is not an Excel workbook: {e}")
+        try:
+            check_limits(self.zip.infolist())
+        except WorkbookError:
+            self.zip.close()
+            raise
         self.sheet_paths = self._sheet_paths()
         self.shared = self._shared_strings()
 
@@ -277,7 +306,13 @@ def validate(data, questions):
     unknown = set(data) - {"meta", "answers"}
     if unknown:
         errors.append(f"unknown top-level keys: {', '.join(sorted(unknown))}")
-    answers, meta = data.get("answers") or {}, data.get("meta") or {}
+    answers, meta = data.get("answers", {}), data.get("meta", {})
+    if not isinstance(answers, dict):
+        errors.append("'answers' must be an object of question id to tag")
+        answers = {}
+    if not isinstance(meta, dict):
+        errors.append("'meta' must be an object of use-case fields")
+        meta = {}
     ids = [q["id"] for q in questions]
     for key in sorted(set(answers) - set(ids)):
         errors.append(f"{key}: not a question in this workbook")
@@ -307,6 +342,8 @@ def validate(data, questions):
                 errors.append(f"meta.over_5m_or_drf must be YES or NO (got {meta[key]!r})")
         if key == "date_completed":
             try:
+                if not DATE.fullmatch(value):
+                    raise ValueError(value)
                 datetime.datetime.strptime(value, "%d/%m/%Y")
             except ValueError:
                 errors.append(f"meta.date_completed must be a real date as dd/mm/yyyy (got {value!r})")
@@ -327,11 +364,13 @@ def set_cell_inline(xml, ref, value):
 
 
 def force_recalc(xml):
-    if "fullCalcOnLoad" in xml:
-        return xml
-    if "<calcPr" in xml:
-        return re.sub(r"<calcPr\b", '<calcPr fullCalcOnLoad="1"', xml, count=1)
-    return xml.replace("</workbook>", '<calcPr fullCalcOnLoad="1"/></workbook>')
+    """Make Excel recalculate every formula on open, whatever calcPr said before."""
+    calc = re.search(r"<calcPr\b[^>]*?/?>", xml)
+    if not calc:
+        return xml.replace("</workbook>", '<calcPr fullCalcOnLoad="1"/></workbook>')
+    tag = re.sub(r'\sfullCalcOnLoad\s*=\s*("[^"]*"|\'[^\']*\')', "", calc.group(0))
+    tag = re.sub(r"^<calcPr\b", '<calcPr fullCalcOnLoad="1"', tag)
+    return xml[:calc.start()] + tag + xml[calc.end():]
 
 
 def fill(template, answers_path, out_path):
@@ -376,12 +415,25 @@ def fill(template, answers_path, out_path):
         book.close()
 
 
+def require_https(url):
+    if urllib.parse.urlparse(url).scheme != "https":
+        raise WorkbookError(f"refusing to download over an insecure connection: {url}")
+
+
+class HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        require_https(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def fetch(url, timeout):
     """GET a URL. Falls back to the system curl (which still verifies certificates) when
     this Python has no CA bundle, as with a python.org install on macOS."""
+    require_https(url)
     request = urllib.request.Request(url, headers={"User-Agent": "nswds-skills"})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.build_opener(HttpsOnlyRedirects).open(request, timeout=timeout) as response:
+            require_https(response.geturl())
             return response.read()
     except urllib.error.URLError as e:
         if not isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
@@ -390,7 +442,7 @@ def fetch(url, timeout):
         if not curl:
             raise WorkbookError(f"Python cannot verify HTTPS certificates ({e.reason}). Install its certificates "
                                 f"or download the workbook yourself from {PAGE_URL}")
-        result = subprocess.run([curl, "--fail", "--silent", "--show-error", "--location", "--proto", "=https",
+        result = subprocess.run([curl, "--fail", "--silent", "--show-error", "--location", "--proto", "=https", "--proto-redir", "=https",
                                  "--max-time", str(timeout), "--user-agent", "nswds-skills", url],
                                 capture_output=True, check=False)
         if result.returncode:
@@ -398,35 +450,46 @@ def fetch(url, timeout):
         return result.stdout
 
 
-def download(directory, force=False):
+def download(directory):
+    """Fetch the current workbook, check it, and save it under its published name.
+    Always downloads, so a workbook updated under the same name is picked up."""
     page = fetch(PAGE_URL, 60).decode("utf-8", "replace")
     links = re.findall(r'href="([^"]+\.xlsx)"', page, re.I)
     links = [l for l in links if "aiaf" in l.lower()] or links
     if not links:
         raise WorkbookError(f"no .xlsx download found on {PAGE_URL}; the page has changed")
     url = urllib.parse.urljoin(PAGE_URL, links[0])
-    name = os.path.basename(urllib.parse.unquote(urllib.parse.urlparse(url).path))
+    parsed = urllib.parse.urlparse(url)
+    require_https(url)
+    if not WORKBOOK_HOST.search(parsed.hostname or ""):
+        raise WorkbookError(f"workbook link is not on a nsw.gov.au site: {url}")
+    name = os.path.basename(urllib.parse.unquote(parsed.path))
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._ -]*\.xlsx", name):
         raise WorkbookError(f"unexpected download file name {name!r} on {PAGE_URL}")
-    path = os.path.join(directory, name)
-    if os.path.exists(path) and not force:
-        return path, url, False
     os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, name)
+    if os.path.islink(path) or (os.path.exists(path) and not os.path.isfile(path)):
+        raise WorkbookError(f"{path} exists and is not a regular file; refusing to replace it")
     body = fetch(url, 120)
-    tmp = f"{path}.part"
-    with open(tmp, "wb") as f:
-        f.write(body)
+    unchanged = False
+    if os.path.isfile(path):
+        with open(path, "rb") as f:
+            unchanged = f.read() == body
+    fd, tmp = tempfile.mkstemp(suffix=".part", dir=directory)
     try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(body)
         book = Workbook(tmp)
         try:
             load_questions(book)
         finally:
             book.close()
-    except WorkbookError:
-        os.remove(tmp)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
         raise
-    os.replace(tmp, path)
-    return path, url, True
+    return path, url, unchanged
 
 
 def main(argv=None):
@@ -434,7 +497,6 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     d = sub.add_parser("download", help="download the current official workbook from Digital NSW")
     d.add_argument("--dir", default=".", help="directory to save it in (default: current directory)")
-    d.add_argument("--force", action="store_true", help="download again even if the file exists")
     q = sub.add_parser("questions", help="print every question, option, tag and description in a workbook")
     q.add_argument("--workbook", required=True)
     q.add_argument("--json", action="store_true", help="print as JSON")
@@ -445,8 +507,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "download":
-            path, url, fresh = download(args.dir, args.force)
-            print(f"{'Downloaded' if fresh else 'Already downloaded'}: {path}\nSource: {url}")
+            path, url, unchanged = download(args.dir)
+            print(f"Downloaded{' (unchanged since last download)' if unchanged else ''}: {path}\nSource: {url}")
         elif args.command == "questions":
             book = Workbook(args.workbook)
             try:

@@ -236,11 +236,55 @@ test('requires a design system stylesheet and JavaScript for js- hooks', () => w
   const messages = checkPage('<div class="nsw-tabs js-tabs"></div>', { version: '9.1.0', ...loadRules(kit) }).map((i) => i.message)
   assert.ok(messages.some((m) => /no design system stylesheet/.test(m)))
   assert.ok(messages.some((m) => /js- hooks/.test(m)))
-  const allowed = checkPage('<link rel="stylesheet" href="/build/site.css"><p class="nsw-card">x</p>', {
-    version: '9.1.0', ...loadRules(kit), allowStylesheets: ['/build/site.css'],
+  const bundle = checkPage('<link rel="stylesheet" href="/build/site.css"><p class="nsw-card">x</p>', {
+    version: '9.1.0', ...loadRules(kit), designSystemCss: ['/build/site.css'],
   })
-  assert.deepEqual(allowed, [])
+  assert.deepEqual(bundle, [])
 }))
+
+test('approved third-party assets never stand in for the design system', () => withKit((kit) => {
+  const page = `<link rel="stylesheet" href="https://maps.example.org/map.css">
+<script src="https://analytics.example.org/a.js"></script>
+<script>window.NSW.initSite()</script>
+<div class="nsw-tabs js-tabs"></div>`
+  const messages = checkPage(page, {
+    version: '9.1.0', ...loadRules(kit), allowStylesheets: ['maps.example.org'], allowScripts: ['analytics.example.org'],
+  }).map((i) => i.message)
+  assert.ok(messages.some((m) => /no design system stylesheet/.test(m)), messages.join('\n'))
+  assert.ok(messages.some((m) => /initSite\(\) is called but the design system JavaScript is not loaded/.test(m)), messages.join('\n'))
+  assert.ok(messages.some((m) => /js- hooks/.test(m)), messages.join('\n'))
+  assert.ok(!messages.some((m) => /not from the design system release/.test(m)), 'approved assets are accepted')
+}))
+
+test('checks unquoted and upper-case attributes', () => withKit((kit) => {
+  const base = `<link rel=stylesheet href=https://cdn.jsdelivr.net/npm/nsw-design-system@9.1.0/dist/css/main.css>`
+  const messages = checkPage(`${base}
+<div CLASS=custom STYLE=color:red>x</div>
+<script src=https://evil.example.org/x.js></script>`, { version: '9.1.0', ...loadRules(kit) }).map((i) => i.message)
+  assert.ok(messages.some((m) => /class "custom" is not defined/.test(m)), messages.join('\n'))
+  assert.ok(messages.some((m) => /style attribute "color:red"/.test(m)), messages.join('\n'))
+  assert.ok(messages.some((m) => /script not from the design system release: https:\/\/evil/.test(m)), messages.join('\n'))
+  assert.ok(!messages.some((m) => /no design system stylesheet/.test(m)), 'an unquoted design system link counts')
+}))
+
+test('ignores HTML comments', () => withKit((kit) => {
+  const rules = { version: '9.1.0', ...loadRules(kit) }
+  const commentedAssets = `<!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/nsw-design-system@9.1.0/dist/css/main.css"> -->
+<p class="nsw-card">x</p>`
+  assert.ok(checkPage(commentedAssets, rules).some((i) => /no design system stylesheet/.test(i.message)), 'commented assets do not count')
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  const commentedJunk = html.replace('<main', '<!-- <div class="custom" style="color:red"></div>\n<script src="https://x.example.org/a.js"></script> -->\n<main')
+  assert.deepEqual(checkPage(commentedJunk, rules), [], 'commented markup is not checked')
+  const lines = checkPage(html.replace('<main', '<!--\n\n-->\n<main class="custom"'), rules)
+  assert.equal(lines[0].line, html.slice(0, html.indexOf('<main')).split('\n').length + 3, 'line numbers survive comment removal')
+}))
+
+test('escapes the template title', () => {
+  const hostile = templatePage.replace('<title>Content page - Article', '<title>A &lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;')
+  const { html } = standaloneTemplate(hostile, '9.1.0')
+  assert.match(html, /<title>A &lt;\/title&gt;&lt;script&gt;alert\(1\)&lt;\/script&gt;<\/title>/)
+  assert.doesNotMatch(html, /<script>alert/)
+})
 
 test('command line works offline from the cache and fails on violations', () => withKit((kit, root) => {
   const env = { ...process.env, NSWDS_CACHE_DIR: root }

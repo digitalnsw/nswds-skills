@@ -1,0 +1,25 @@
+name: AIAF assessment skill tests
+on:
+  pull_request:
+    paths:
+      - 'skills/aiaf-assessment/**'
+      - '.github/workflows/aiaf-assessment.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/aiaf-assessment/**'
+      - '.github/workflows/aiaf-assessment.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s skills/aiaf-assessment/scripts -v

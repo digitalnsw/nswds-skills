@@ -1,29 +1,89 @@
 # nswds-skills
 
-A collection of agent skills for product development workflows, maintained by Digital NSW. It contains two kinds of entry:
+Agent skills for developers building NSW Government digital services, maintained by Digital NSW.
 
-- **Skills** — self-contained instruction sets an AI coding agent (Claude Code, Cursor, Copilot, and others) loads when its trigger conditions match.
-- **Workflow packages** — tools built for one specific agent, with their own installer.
+A skill is a set of instructions that your AI coding agent loads when a task matches it. Install these and your agent will check content against the Australian Government Style Manual, audit pages against WCAG, review dependency updates properly and more, without you writing the prompt each time. They work with Claude Code, Cursor, GitHub Copilot and other agents that support skills.
 
-## Install
+## Get started
 
-### Skills
-
-Install all skills:
+Run this in the root of your project:
 
 ```bash
 npx skills add digitalnsw/nswds-skills
 ```
 
-Install a single skill:
+Then ask your agent to do the work. It picks the right skill for you:
+
+> Audit the apply journey on http://localhost:3000 against WCAG 2.2 AA.
+
+> Check the content in `src/pages/` against the Australian Government Style Manual.
+
+> Is Renovate PR 214 safe to merge?
+
+To install one skill only:
 
 ```bash
-npx skills add digitalnsw/nswds-skills --skill dependency-update-review
+npx skills add digitalnsw/nswds-skills --skill wcag-technical-audit
 ```
 
-### Workflow packages
+## Skills
 
-Install a workflow package with its own installer, not `npx skills add`, which does not run installers. Preview the changes with `--dry-run` first:
+### Content and accessibility
+
+For anything the public reads or uses.
+
+| Skill | What it does | Try asking |
+| --- | --- | --- |
+| [australian-style-manual](skills/australian-style-manual/SKILL.md) | Assesses every piece of content in scope against the [Australian Government Style Manual](https://www.stylemanual.gov.au/) and fixes what needs fixing. Covers page copy, interface text, forms, metadata and accessibility text, and reports what it checked. | "Review the error messages in this form against the Style Manual." |
+| [wcag-technical-audit](skills/wcag-technical-audit/SKILL.md) | Audits pages and complete user journeys against WCAG 2.2 AA by default, using automated, keyboard, visual and screen reader testing. Every finding comes with evidence, and a coverage checker lists each success criterion and anything it could not verify. Supports A and AAA targets. | "Do a WCAG 2.2 AA audit of the sign-in and account pages." |
+
+### Pull requests and dependencies
+
+| Skill | What it does | Try asking |
+| --- | --- | --- |
+| [dependency-update-review](skills/dependency-update-review/SKILL.md) | Reviews Renovate and Dependabot pull requests, manual version bumps and lockfile-only changes as thoroughly as any other pull request. Scales the depth of review to the risk, researches every version in the range and checks the impact against your code. Never commits migration work to a bot's branch. | "Review the dependency update in PR 88." |
+| [pr-review-feedback](skills/pr-review-feedback/SKILL.md) | Works through unresolved review comments on your own pull request. Checks each comment against the current branch rather than accepting it, then (with your approval) makes the confirmed fixes, replies to every thread and resolves the ones that no longer apply. | "Go through the unresolved comments on my PR." |
+
+### Security and repository settings
+
+| Skill | What it does | Try asking |
+| --- | --- | --- |
+| [snyk-security-scan](skills/snyk-security-scan/SKILL.md) | Runs Snyk code, dependency, infrastructure-as-code and container scans through the Snyk MCP connector, then triages the results: scopes them to your change, traces the data flow, fixes root causes and rescans until clean. Includes fixes for common Snyk sign-in problems. | "Scan the new upload handler for security issues." |
+| [protect-branch](skills/protect-branch/SKILL.md) | Sets up branch protection on a GitHub repository so nothing merges unless CI passes. Adds a ruleset requiring up-to-date status checks, a CI workflow that fails on conflict markers and broken lockfiles, and a deploy key so release workflows can still push. | "Protect the main branch of this repo." |
+
+### Documentation
+
+| Skill | What it does | Try asking |
+| --- | --- | --- |
+| [handover-docs](skills/handover-docs/SKILL.md) | Writes project documentation as a reference for the next developer or the client: what exists now, what is broken now and how to run it. Leaves out project history, dated entries and pull request references. | "Turn my notes into handover docs for this project." |
+
+## Share the skills with your team
+
+When you run `npx skills add` inside a project, the skills are copied into the project (for Claude Code, into `.claude/skills/`) and recorded in `skills-lock.json`. Commit both, and everyone who clones the repository gets the same skills.
+
+To install for yourself only, across all your projects, add `-g`:
+
+```bash
+npx skills add digitalnsw/nswds-skills -g
+```
+
+To get the latest versions of project skills:
+
+```bash
+npx skills update -p
+```
+
+Skills run with your agent's full permissions. Read a skill before you install it, as you would any other code.
+
+## Claude Code quality review workflow
+
+[claude-code-quality-workflow](skills/claude-code-quality-workflow/README.md) is a separate package for Claude Code only. It adds 3 commands for checking a branch before it merges:
+
+- `/quality-review` reviews the whole branch and reports concrete defects without editing anything
+- `/fix-review` repairs only the findings you select
+- `/final-review` confirms each finding is resolved and looks for regressions.
+
+It needs Git, Node.js 18 or later and Claude Code 2.1.218 or later. It has its own installer, because `npx skills add` does not run installers. Preview the changes with `--dry-run` first:
 
 ```bash
 git clone https://github.com/digitalnsw/nswds-skills.git
@@ -32,29 +92,23 @@ cd nswds-skills/skills/claude-code-quality-workflow
 ./install.sh
 ```
 
-## Skills
+Its [README](skills/claude-code-quality-workflow/README.md) covers installation, use, the model it runs on and its limits.
 
-| Skill | What it does |
-| --- | --- |
-| [wcag-technical-audit](skills/wcag-technical-audit/SKILL.md) | Audits web experiences against WCAG 2.2 AA by default, with automated, keyboard, visual and screen-reader testing, complete journey coverage, evidence-backed findings and a criterion-level coverage checker. Supports A and AAA targets and explicitly reports unverified checks. |
-| [australian-style-manual](skills/australian-style-manual/SKILL.md) | Assesses every content item in the requested scope against the Australian Government Style Manual and applies necessary corrections. Covers prose, interface text, forms, metadata and accessibility text, with official source guidance and explicit coverage reporting. |
-| [dependency-update-review](skills/dependency-update-review/SKILL.md) | Full pull-request-depth review of dependency updates (Renovate/Dependabot bumps, manual version changes, lockfile-only updates). Scales review depth to risk, researches every version in the range, verifies impact against the actual codebase, and never commits migration work to a bot-owned branch. |
-| [pr-review-feedback](skills/pr-review-feedback/SKILL.md) | Works through unresolved review feedback on your own PR. Treats every reviewer comment as a hypothesis, validates each against the current branch, then (after approval) implements confirmed fixes, replies to every thread, and resolves the ones that no longer apply. |
-| [handover-docs](skills/handover-docs/SKILL.md) | Writes project documentation as a current-state technical knowledgebase for an incoming developer or client — never a project journal. No dated entries, no PR references, no fixed issues retained as history. |
-| [snyk-security-scan](skills/snyk-security-scan/SKILL.md) | Runs security scans through the Snyk MCP connector (SAST, SCA, IaC, container) and triages the findings: scope to the change, walk the dataflow, fix root causes, rescan until clean. Includes connector-auth troubleshooting for the token traps that make scans fail while login claims success. |
-| [protect-branch](skills/protect-branch/SKILL.md) | Sets up merge-gating branch protection on a GitHub repo: a ruleset requiring up-to-date CI status checks, a CI workflow that fails fast on conflict markers and broken lockfiles, and a deploy-key bypass for release workflows that push to the protected branch — with the traps (admin bypass, GitHub Actions bypass) documented so they're avoided. |
+## Feedback
 
-## Workflow packages
+Tell us what worked, what didn't and what skill your team needs next by [opening an issue](https://github.com/digitalnsw/nswds-skills/issues).
 
-| Package | Agent | What it does |
-| --- | --- | --- |
-| [claude-code-quality-workflow](skills/claude-code-quality-workflow/README.md) | Claude Code | Installs three global commands. `/quality-review` reviews the whole branch against an automatically detected base and returns a Markdown report of concrete defects with a coverage table, without editing anything. `/fix-review` repairs only the findings you select. `/final-review` confirms from the code whether they are resolved and looks for regressions. One reviewer, one turn per command, no saved state and no per-repository setup. |
+## Contributing
 
-The package needs Git, Node.js 18 or later and Claude Code 2.1.218 or later. Its README covers installation, use, the model it runs on and its limits.
+Skills must work with any agent and in any organisation. They must not reference specific repositories, organisations or machines. Supporting material goes in the skill's `references/` directory and is linked from its `SKILL.md`.
 
-## Layout
+Workflow packages target one agent by design but follow the same rule. Each has its own README, installer and tests.
 
-Skills follow the standard directory layout:
+The Australian Style Manual skill has [opt-in behavioural evaluations](skills/australian-style-manual/evals/README.md) for assessment-only and editing requests, with checks for protected content and unintended file changes.
+
+### Layout
+
+Skills use the standard directory layout:
 
 ```
 skills/<name>/SKILL.md        # the skill definition (YAML frontmatter + instructions)
@@ -70,12 +124,4 @@ skills/<package>/scripts/     # installer implementation
 skills/<package>/test/        # automated tests
 ```
 
-The package's commands and their small deterministic helpers sit under `.claude/skills/` inside the package directory.
-
-## Contributing
-
-Skills in this collection are deliberately tool-agnostic and org-agnostic: they must not reference specific repositories, organisations, or machines. Supporting material lives in the skill's `references/` directory and is linked from the SKILL.md.
-
-Workflow packages target one agent by design, but are held to the same org-agnostic rule. Each carries its own README, installer and tests.
-
-The Australian Style Manual skill includes [opt-in behavioural evaluations](skills/australian-style-manual/evals/README.md) for assessment-only and editing requests, with checks for protected content and unintended file changes.
+The package's commands and their deterministic helpers are in `.claude/skills/` inside the package directory.

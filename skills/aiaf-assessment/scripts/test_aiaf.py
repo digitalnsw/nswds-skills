@@ -31,7 +31,7 @@ def sheet(cells, extra=""):
     return f'<?xml version="1.0" encoding="UTF-8"?><worksheet {NS}><sheetData>{data}</sheetData>{extra}</worksheet>'
 
 
-def build_workbook(path, drop_validation=False):
+def build_workbook(path, drop_validation=False, q2_sqref="E4:E5"):
     strings = [
         "Question", "Response (with Qualifying Statement)", "TechnicalDescription", "EthicalDescription", "Tag", "VERSION",
         "What phase?", "Concept - Idea only.", "Planning.", "Weigh necessity.", "phase:concept", "TEST-01",
@@ -61,7 +61,7 @@ def build_workbook(path, drop_validation=False):
     ])
     q2_validation = "" if drop_validation else (
         '<x14:dataValidation type="list"><x14:formula1><xm:f>Questions!$B$4:$B$5</xm:f></x14:formula1>'
-        '<xm:sqref>E4:E5</xm:sqref></x14:dataValidation>')
+        f'<xm:sqref>{q2_sqref}</xm:sqref></x14:dataValidation>')
     extensions = (
         '<extLst><ext uri="{CCE6A557-97BC-4b89-ADB6-D9C93CAAB3DF}" '
         'xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">'
@@ -215,6 +215,8 @@ class AiafTest(unittest.TestCase):
         self.assertEqual(aiaf.force_recalc("<workbook><calcPr fullCalcOnLoad='false' calcId=\"1\"></calcPr></workbook>"),
                          '<workbook><calcPr fullCalcOnLoad="1" calcId="1"></calcPr></workbook>')
         self.assertEqual(aiaf.force_recalc("<workbook></workbook>"), '<workbook><calcPr fullCalcOnLoad="1"/></workbook>')
+        self.assertEqual(aiaf.force_recalc("<workbook><sheets/><definedNames/><pivotCaches/><extLst/></workbook>"),
+                         '<workbook><sheets/><definedNames/><calcPr fullCalcOnLoad="1"/><pivotCaches/><extLst/></workbook>')
 
     def test_refuses_oversized_or_highly_compressed_packages(self):
         big = os.path.join(self.dir.name, "big.xlsx")
@@ -267,6 +269,55 @@ class AiafTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("error: xl/sharedStrings.xml is not valid XML", err)
         self.assertNotIn("Traceback", err)
+
+    def test_whole_sheet_dropdown_ranges_are_cheap(self):
+        build_workbook(self.template, q2_sqref="E4:XFD1048576")
+        book = aiaf.Workbook(self.template)
+        try:
+            questions = aiaf.load_questions(book)[0]
+        finally:
+            book.close()
+        self.assertEqual([q["assessment_cell"] for q in questions], ["E3", "E4"])
+
+    def test_refuses_parts_that_are_not_utf8(self):
+        def utf16(data):
+            text = data.decode("utf-8").replace('encoding="UTF-8"', 'encoding="UTF-16"')
+            text = text.replace("?>", '?><!DOCTYPE sst [<!ENTITY a "EXPANDED">]>', 1).replace("<t>Q1</t>", "<t>&a;</t>")
+            return text.encode("utf-16")
+        cases = [utf16,
+                 lambda data: data.decode("utf-8").encode("utf-16-le"),
+                 lambda data: data.replace(b'encoding="UTF-8"', b'encoding="ISO-8859-1"')]
+        for change in cases:
+            path = self.rewrite_part("xl/sharedStrings.xml", change)
+            code, _, err = self.run_cli("questions", "--workbook", path)
+            self.assertEqual(code, 1)
+            self.assertIn("xl/sharedStrings.xml is not UTF-8 XML", err)
+
+    def test_reads_each_part_once(self):
+        reads = {}
+        real_read = aiaf.zipfile.ZipFile.read
+
+        def counting(zf, name, *args, **kwargs):
+            key = getattr(name, "filename", name)
+            reads[key] = reads.get(key, 0) + 1
+            return real_read(zf, name, *args, **kwargs)
+        aiaf.zipfile.ZipFile.read = counting
+        try:
+            aiaf.fill(self.template, self.write_answers(GOOD), os.path.join(self.dir.name, "filled.xlsx"))
+        finally:
+            aiaf.zipfile.ZipFile.read = real_read
+        self.assertEqual({k: v for k, v in reads.items() if v > 1}, {})
+
+    def test_never_overwrites_the_template_through_another_name(self):
+        link = os.path.join(self.dir.name, "link.xlsx")
+        os.symlink(self.template, link)
+        with open(self.template, "rb") as f:
+            before = f.read()
+        code, _, err = self.run_cli("fill", "--workbook", self.template, "--answers", self.write_answers(GOOD), "--out", link)
+        self.assertEqual(code, 1)
+        self.assertIn("must be a new file", err)
+        with open(self.template, "rb") as f:
+            self.assertEqual(f.read(), before)
 
     def test_reports_missing_shared_strings_cleanly(self):
         for bad in (b"<v>9999</v>", b"<v>-1</v>", b"<v>x</v>"):
@@ -341,7 +392,7 @@ class AiafTest(unittest.TestCase):
         self.assertEqual(json.loads(out)["questions"][1]["options"][0]["tag"], "stakeholder:internal")
 
     def test_expands_cell_ranges(self):
-        self.assertEqual(aiaf.expand_sqref("E3 E18:E20 A1:B1"), ["E3", "E18", "E19", "E20", "A1", "B1"])
+        self.assertEqual(aiaf.sqref_ranges("E3 E18:E20 A1:XFD1048576"), [(5, 3, 5, 3), (5, 18, 5, 20), (1, 1, 16384, 1048576)])
         self.assertEqual(aiaf.col_letters(aiaf.col_number("AB")), "AB")
 
 
@@ -494,6 +545,30 @@ class CurlFallbackTest(unittest.TestCase):
         self.respond(b"no status line")
         with self.assertRaisesRegex(aiaf.WorkbookError, "could not read the response status"):
             aiaf.curl_fetch(self.TRUSTED, 5, "test", 100)
+
+
+class FetchErrorTest(unittest.TestCase):
+    def test_wraps_http_protocol_errors(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def geturl(self):
+                return aiaf.PAGE_URL
+
+            def read(self, size=-1):
+                raise aiaf.http.client.IncompleteRead(b"partial", 100)
+
+        real = aiaf.urllib.request.build_opener
+        aiaf.urllib.request.build_opener = lambda *handlers: types.SimpleNamespace(open=lambda request, timeout: Response())
+        try:
+            with self.assertRaisesRegex(aiaf.WorkbookError, "could not download .*IncompleteRead"):
+                aiaf.fetch(aiaf.PAGE_URL, 5, 1000)
+        finally:
+            aiaf.urllib.request.build_opener = real
 
 
 class ReadLimitedTest(unittest.TestCase):

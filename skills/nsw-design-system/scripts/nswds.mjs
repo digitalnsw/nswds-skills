@@ -319,30 +319,47 @@ export function cssClasses(css) {
   return new Set([...stripped.matchAll(/\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g)].map((m) => m[1]))
 }
 
-// Opening tags, read so that a ">" inside a quoted attribute value does not end the tag.
-// Attribute names are case-insensitive and values may be double-quoted, single-quoted or
-// unquoted; the first occurrence of a repeated attribute wins, as in a browser.
-const OPEN_TAG = /<([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g
+// A single-pass tokenizer: comments, opening tags and raw-text elements are read in
+// document order, as a browser reads them. A "<!--" inside an attribute value or script
+// text is not a comment, markup inside script or style text is not a tag, and a ">" inside
+// a quoted attribute value does not end the tag. Attribute names are case-insensitive,
+// values may be double-quoted, single-quoted or unquoted, and the first occurrence of a
+// repeated attribute wins. Raw-text elements carry their text as `content`.
+const OPEN_TAG = /<([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/y
 const ATTRIBUTE = /([^\s"'=<>/\x60]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>\x60]+)))?/g
+const RAW_TEXT = new Set(['script', 'style', 'textarea', 'title', 'xmp', 'iframe', 'noembed', 'noframes'])
 export function openTags(html) {
-  return [...html.matchAll(OPEN_TAG)].map((m) => {
+  const tags = []
+  let i = 0
+  while (i < html.length) {
+    const lt = html.indexOf('<', i)
+    if (lt < 0) break
+    if (html.startsWith('<!--', lt)) {
+      // "<!-->" and "<!--->" are complete (empty) comments.
+      const end = html.startsWith('<!-->', lt) ? lt + 2 : html.startsWith('<!--->', lt) ? lt + 3 : html.indexOf('-->', lt + 4)
+      i = end < 0 ? html.length : end + 3
+      continue
+    }
+    OPEN_TAG.lastIndex = lt
+    const m = OPEN_TAG.exec(html)
+    if (!m) { i = lt + 1; continue }
     const attrs = new Map()
     for (const a of m[2].matchAll(ATTRIBUTE)) {
       const name = a[1].toLowerCase()
       if (!attrs.has(name)) attrs.set(name, a[2] ?? a[3] ?? a[4] ?? '')
     }
-    return { name: m[1].toLowerCase(), attrs, index: m.index, end: m.index + m[0].length }
-  })
+    const tag = { name: m[1].toLowerCase(), attrs, index: lt, end: lt + m[0].length }
+    tags.push(tag)
+    i = tag.end
+    if (RAW_TEXT.has(tag.name)) {
+      const close = html.slice(i).search(new RegExp(`</${tag.name}[\\s/>]`, 'i'))
+      tag.content = close < 0 ? html.slice(i) : html.slice(i, i + close)
+      i += tag.content.length
+    }
+  }
+  return tags
 }
 const classesOf = (tag) => (tag.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
-// The text of a raw-text element (script, style) that starts after an opening tag.
-const contentAfter = (html, tag) => {
-  const rest = html.slice(tag.end)
-  const close = rest.search(new RegExp(`</${tag.name}\\s*>`, 'i'))
-  return close < 0 ? rest : rest.slice(0, close)
-}
-// Blank out comments, keeping line breaks so reported line numbers stay right.
-const withoutComments = (html) => html.replace(/<!--[\s\S]*?(?:-->|$)/g, (c) => c.replace(/[^\n]/g, ' '))
 export const styleKey = (value) => value.replace(/url\([^)]*\)/g, 'url()').replace(/\s+/g, ' ')
   .replace(/\s*([:;,])\s*/g, '$1').replace(/;+$/, '').trim()
 
@@ -365,67 +382,77 @@ const unescapeAmp = (url) => url.replace(/&amp;/g, '&')
 export function parseApproval(pattern) {
   const value = String(pattern).trim()
   if (/^https:\/\//i.test(value)) {
-    const url = new URL(value)
     // Prefix matching needs a "/" the user wrote; URL() adds one to a bare origin.
     const written = value.replace(/^https:\/\/[^/?#]*/i, '').split(/[?#]/)[0]
     if (!written) {
       throw new Error(`approval "${value}" names a whole site; add a trailing / to approve everything on it, or give a file's address`)
     }
-    return { origin: url.origin, path: url.pathname, search: url.search, prefix: written.endsWith('/') }
+    return { ...locate(value), prefix: written.endsWith('/') }
   }
   if (/^\.{0,2}\//.test(value) && !value.startsWith('//')) {
-    const written = value.split(/[?#]/)[0]
-    const url = resolveRelative(value)
-    return { origin: null, path: url.pathname, search: url.search, prefix: written.endsWith('/') }
+    const place = locate(value)
+    if (!place || !['root', 'document'].includes(place.scope)) throw new Error(`approval "${value}" is not a path on your site`)
+    return { ...place, prefix: value.split(/[?#]/)[0].endsWith('/') }
   }
   throw new Error(`approval "${value}" must be an https:// address or a path starting with / or ./`)
 }
 
-// Resolves "." and ".." segments (including percent-encoded ones) the way a browser
-// does, so "/build/../evil.js" is compared as "/evil.js".
-const RELATIVE_BASE = 'https://relative.invalid/page/'
-const resolveRelative = (url) => new URL(url.split('#')[0], RELATIVE_BASE)
-
-export function approved(url, approvals) {
-  const absolute = /^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith('//')
-  let origin = null
-  let parsed
+// Resolves an address the way a browser does: surrounding whitespace, backslashes, tabs
+// and "." or ".." segments (including percent-encoded ones) are all handled by URL(). It
+// is resolved against two different page locations. If the result leaves the placeholder
+// host, the address names another site (for example "\\host/x" or " //host/x"); if both
+// results agree, the address is root-relative; otherwise it is relative to the page.
+const PLACEHOLDER = 'https://relative.invalid'
+const PAGE_A = `${PLACEHOLDER}/a/a/a/a/a/a/a/a/`
+const PAGE_B = `${PLACEHOLDER}/b/b/b/b/b/b/b/b/`
+function locate(url) {
+  const clean = String(url).split('#')[0]
+  let a
+  let b
   try {
-    parsed = absolute ? new URL(url.startsWith('//') ? `https:${url}` : url) : resolveRelative(url)
+    a = new URL(clean, PAGE_A)
+    b = new URL(clean, PAGE_B)
   } catch {
-    return false
+    return null
   }
-  if (absolute) {
-    if (parsed.protocol !== 'https:') return false
-    origin = parsed.origin
-  }
-  const { pathname: path, search } = parsed
-  return approvals.some((a) => a.origin === origin
-    && (a.prefix ? path.startsWith(a.path) : path === a.path && search === a.search))
+  if (a.origin !== PLACEHOLDER) return a.protocol === 'https:' ? { scope: a.origin, path: a.pathname, search: a.search } : null
+  return { scope: a.pathname === b.pathname ? 'root' : 'document', path: a.pathname, search: a.search }
 }
 
-// Class names, inline style values and Google Fonts links the release itself uses.
+export function approved(url, approvals) {
+  const place = locate(url)
+  if (!place) return false
+  return approvals.some((a) => a.scope === place.scope
+    && (a.prefix ? place.path.startsWith(a.path) : place.path === a.path && place.search === a.search))
+}
+
+// Class names, inline style values and Google Fonts links the release's components, core
+// styles and guides use.
 export function loadRules(kit) {
   const classes = cssClasses(readFileSync(join(kit, 'css', 'main.css'), 'utf8'))
   const styles = new Set()
   const fonts = new Set()
-  const walk = (dir, collectStyles) => {
+  const walk = (dir) => {
     if (!existsSync(dir)) return
     for (const d of readdirSync(dir, { withFileTypes: true })) {
       const path = join(dir, d.name)
-      if (d.isDirectory()) walk(path, collectStyles)
+      if (d.isDirectory()) walk(path)
       else if (d.name.endsWith('.html')) {
-        for (const tag of openTags(withoutComments(readFileSync(path, 'utf8')))) {
+        const html = readFileSync(path, 'utf8')
+        // The live examples on each page and the markup shown in its code samples.
+        const markup = [html, ...examplesOf(html).filter((e) => e.language === 'html').map((e) => e.markup)]
+        for (const tag of markup.flatMap(openTags)) {
           const href = tag.attrs.get('href')
           if (tag.name === 'link' && href?.startsWith('https://fonts.googleapis.com/')) fonts.add(unescapeAmp(href))
           for (const name of classesOf(tag)) if (!name.startsWith('nsw-docs') && !name.startsWith('hljs')) classes.add(name)
-          if (collectStyles && tag.attrs.has('style')) styles.add(styleKey(tag.attrs.get('style')))
+          if (tag.attrs.has('style')) styles.add(styleKey(tag.attrs.get('style')))
         }
       }
     }
   }
-  for (const group of ['components', 'core', join('docs', 'content')]) walk(join(kit, group), true)
-  walk(join(kit, 'templates'), false)
+  // Page templates are not a source: some are demonstrations whose classes only work with
+  // their own custom CSS.
+  for (const group of ['components', 'core', join('docs', 'content')]) walk(join(kit, group))
   return { classes, styles, fonts }
 }
 
@@ -434,13 +461,23 @@ export function loadRules(kit) {
 // build); allowStylesheets/allowScripts name approved third-party assets, which are
 // accepted but never count as the design system itself. Inline scripts other than the
 // initSite call fail unless their content contains an allowInlineScripts entry.
-export function checkPage(source, {
+export function checkPage(html, {
   version, classes, styles = new Set(), fonts = new Set(),
   designSystemCss = [], designSystemJs = [], allowStylesheets = [], allowScripts = [], allowInlineScripts = [],
 }) {
-  const html = withoutComments(source)
   const issues = []
-  const lineOf = (index) => html.slice(0, index).split('\n').length
+  const newlines = []
+  for (let i = html.indexOf('\n'); i >= 0; i = html.indexOf('\n', i + 1)) newlines.push(i)
+  const lineOf = (index) => {
+    let low = 0
+    let high = newlines.length
+    while (low < high) {
+      const mid = (low + high) >> 1
+      if (newlines[mid] < index) low = mid + 1
+      else high = mid
+    }
+    return low + 1
+  }
   const add = (level, index, message) => issues.push({ level, line: lineOf(index), message })
   // Blank patterns would approve everything, so they are ignored.
   const nonBlank = (patterns) => patterns.filter((p) => typeof p === 'string' && p.trim() !== '')
@@ -455,9 +492,41 @@ export function checkPage(source, {
   const pinned = (index, asset) => {
     if (asset.version !== version) add('error', index, `design system asset pinned to @${asset.version}; use the exact release @${version}`)
   }
+  // Returns true for the release's own file or a designated design system bundle, false for
+  // an approved extra, and reports anything else.
+  const stylesheetSource = (tag, href) => {
+    const asset = dsAsset(href, 'css')
+    if (asset && ['main.css', 'core.css'].includes(asset.file)) { pinned(tag.index, asset); return true }
+    if (href && approved(href, dsCss)) return true
+    if (fonts.has(href) || (href && approved(href, otherCss))) return false
+    add('error', tag.index, `stylesheet not from the design system release: ${href || '(no href)'}`)
+    return false
+  }
+  const scriptSource = (tag, src) => {
+    const asset = dsAsset(src, 'js')
+    if (asset && ['main.js', 'main.min.js'].includes(asset.file)) { pinned(tag.index, asset); return true }
+    if (src && approved(src, dsJs)) return true
+    if (src && approved(src, otherJs)) return false
+    add('error', tag.index, `script not from the design system release: ${src || '(empty src)'}`)
+    return false
+  }
   const tags = openTags(html)
+  for (const tag of tags) {
+    for (const [name, value] of tag.attrs) {
+      if (name.startsWith('on') && !inlineApproved(value)) {
+        add('error', tag.index, `${name} attribute: inline script not from the design system release; use a design system component, or pass --allow-inline-script if the user approved it`)
+      }
+      if (['href', 'src', 'action', 'formaction', 'xlink:href'].includes(name)
+        && /^javascript:/i.test(value.replace(/[\u0000-\u0020]/g, '')) && !inlineApproved(value)) {
+        add('error', tag.index, `javascript: address in ${name}: inline script not from the design system release`)
+      }
+    }
+  }
+  for (const tag of tags.filter((t) => t.name === 'base')) {
+    add('error', tag.index, '<base> element: it changes where every relative address loads from; remove it')
+  }
   for (const tag of tags.filter((t) => t.name === 'style')) {
-    if (!themeOnly(contentAfter(html, tag))) add('error', tag.index, '<style> element: custom CSS is not allowed; only --nsw-* theming variables may be set')
+    if (!themeOnly(tag.content)) add('error', tag.index, '<style> element: custom CSS is not allowed; only --nsw-* theming variables may be set')
   }
   for (const tag of tags.filter((t) => t.attrs.has('style'))) {
     const value = tag.attrs.get('style')
@@ -465,35 +534,36 @@ export function checkPage(source, {
   }
   let stylesheet = false
   for (const tag of tags.filter((t) => t.name === 'link')) {
-    if (!(tag.attrs.get('rel') ?? '').toLowerCase().split(/\s+/).includes('stylesheet')) continue
+    const rel = (tag.attrs.get('rel') ?? '').toLowerCase().split(/\s+/)
     const href = unescapeAmp(tag.attrs.get('href') ?? '')
-    const asset = dsAsset(href, 'css')
-    if (asset && ['main.css', 'core.css'].includes(asset.file)) { stylesheet = true; pinned(tag.index, asset) }
-    else if (href && approved(href, dsCss)) stylesheet = true
-    else if (fonts.has(href)) continue
-    else if (href && approved(href, otherCss)) continue
-    else add('error', tag.index, `stylesheet not from the design system release: ${href || '(no href)'}`)
+    const as = (tag.attrs.get('as') ?? '').toLowerCase()
+    if (rel.includes('stylesheet')) stylesheet = stylesheetSource(tag, href) || stylesheet
+    else if (rel.some((r) => ['preload', 'prefetch'].includes(r)) && as === 'style') stylesheetSource(tag, href)
+    else if (rel.includes('modulepreload') || (rel.some((r) => ['preload', 'prefetch'].includes(r)) && as === 'script')) scriptSource(tag, href)
   }
   if (!stylesheet) add('error', 0, `no design system stylesheet; link ${cdn(version, 'css/main.css')} or pass --design-system-css for your compiled design system bundle`)
   let script = false
   let init = false
+  let initTooEarly = null
   for (const tag of tags.filter((t) => t.name === 'script')) {
     const src = tag.attrs.get('src')
-    const content = contentAfter(html, tag)
+    const content = tag.content
     if (src !== undefined) {
-      const asset = dsAsset(src, 'js')
-      if (asset && ['main.js', 'main.min.js'].includes(asset.file)) { script = true; pinned(tag.index, asset) }
-      else if (src && approved(src, dsJs)) script = true
-      else if (src && approved(src, otherJs)) continue
-      else add('error', tag.index, `script not from the design system release: ${src || '(empty src)'}`)
+      if (scriptSource(tag, src)) {
+        script = true
+        const deferred = tag.attrs.has('defer') || tag.attrs.has('async') || (tag.attrs.get('type') ?? '').toLowerCase() === 'module'
+        if (deferred) add('error', tag.index, 'design system JavaScript must load without defer, async or type="module", or window.NSW.initSite() runs before it')
+      }
     } else if (/^\s*window\.NSW\.initSite\(\);?\s*$/.test(content)) {
       init = true
+      if (!script && initTooEarly === null) initTooEarly = tag.index
     } else if (content.trim() && !inlineApproved(content)) {
       add('error', tag.index, 'inline script not from the design system release; use a design system component, or pass --allow-inline-script if the user approved it')
     }
   }
   const hooks = tags.some((t) => classesOf(t).some((name) => name.startsWith('js-')))
   if (script && !init) add('error', 0, 'design system JavaScript is loaded but window.NSW.initSite() is never called')
+  if (script && initTooEarly !== null) add('error', initTooEarly, 'window.NSW.initSite() runs before the design system JavaScript is loaded; call it after the script')
   if (!script && init) add('error', 0, 'window.NSW.initSite() is called but the design system JavaScript is not loaded')
   if (!script && hooks) add('error', 0, 'page uses js- hooks but does not load the design system JavaScript')
   const seen = new Map()

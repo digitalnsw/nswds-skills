@@ -61,7 +61,8 @@ function zip(files) {
   return Buffer.concat([...locals, directory, end])
 }
 
-const docsPage = (title, body) => `<!doctype html><html lang="en"><head><title>${title} | NSW Design System</title></head>
+const docsPage = (title, body) => `<!doctype html><html lang="en" class="no-js"><head><title>${title} | NSW Design System</title>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans&display=swap" rel="stylesheet"></head>
 <body><div class="nsw-header__title">NSW Design System <span class="nsw-docs__version">v9.1.0</span></div>
 <div class="nsw-docs__main"><h1>${title}</h1>${body}</div><footer></footer></body></html>`
 const code = (language, markup) => `<pre><code class="${language}"><script>document.write((\`${markup}\`).replace(/</g, "&lt;"));</script></code></pre>`
@@ -75,7 +76,7 @@ const cardPage = docsPage('Cards', `
 </section>
 <section id="section-interactive-demo" class="nsw-tabs__content">
 <h3>Headline only</h3><h4>White</h4>
-<div class="nsw-docs__example"><div class="nsw-card nsw-card--white">Live</div></div>
+<div class="nsw-docs__example"><div class="nsw-card nsw-card--white">Live</div><div class="nsw-tabs js-tabs"></div></div>
 ${code('html', '<div class="nsw-card nsw-card--white"><a href="#">Title</a></div>')}
 <h4>Image</h4>
 ${code('html', '<div class="nsw-card" style="background-image: url(https://example.org/a.jpg);">\\`x\\`</div>')}
@@ -112,7 +113,7 @@ function kitFiles(version = '9.1.0') {
     ['core/grid/index.html', docsPage('Grid', '<p>Twelve columns.</p>')],
     ['docs/content/develop/theming.html', themingPage],
     ['templates/content/article.html', templatePage],
-    ['templates/index.html', docsPage('Templates', '')],
+    ['templates/index.html', docsPage('Templates', '<div class="nsw-map-bar"></div>')],
     ['assets/images/photo.jpg', 'binary'],
     ['../escape.html', 'nope'],
   ]
@@ -360,6 +361,81 @@ test('reads tags quote-aware so a ">" in a value cannot hide an attribute', () =
   assert.ok(checkPage(link, rules).some((i) => /stylesheet not from the design system release: https:\/\/x\.example\.org/.test(i.message)))
   const text = html.replace('<h1>Article</h1>', '<h1>Use class=custom in a sentence</h1>')
   assert.deepEqual(checkPage(text, rules), [], 'attribute-like text outside a tag is not an attribute')
+}))
+
+test('addresses that resolve to another site never match a site-path approval', () => {
+  const approvals = ['/build/', './js/'].map(parseApproval)
+  for (const url of ['\\\\evil.example/build/x.js', '/\\evil.example/build/x.js', ' //evil.example/build/x.js',
+    '/\t/evil.example/build/x.js', ' https://evil.example/build/x.js', '\\\\evil.example/js/x.js']) {
+    assert.ok(!approved(url, approvals), JSON.stringify(url))
+  }
+  assert.ok(approved(' /build/x.js', approvals), 'surrounding whitespace is ignored, as in a browser')
+})
+
+test('page-relative and root-relative approvals do not overlap', () => {
+  const page = [parseApproval('./js/')]
+  const root = [parseApproval('/js/')]
+  for (const url of ['/js/x.js', '/a/a/a/a/a/a/a/a/js/x.js', '/page/js/x.js']) assert.ok(!approved(url, page), url)
+  assert.ok(approved('js/x.js', page) && approved('./js/x.js', page))
+  assert.ok(!approved('js/x.js', root) && approved('/js/x.js', root))
+})
+
+test('templates are not a source of design system classes', () => withKit((kit) => {
+  assert.ok(!loadRules(kit).classes.has('nsw-map-bar'), 'a class used only by a demonstration template is not allowed')
+}))
+
+test('comment markers inside attributes and script text do not hide markup', () => withKit((kit) => {
+  const rules = { version: '9.1.0', ...loadRules(kit) }
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  const hidden = html.replace('<main', '<p title="<!--"></p><div style="color:red" class="evil"></div><p title="-->"></p>\n<main')
+  const messages = checkPage(hidden, rules).map((i) => i.message)
+  assert.ok(messages.some((m) => /style attribute "color:red"/.test(m)), messages.join('\n'))
+  assert.ok(messages.some((m) => /class "evil" is not defined/.test(m)), messages.join('\n'))
+  const empty = html.replace('<main', '<!--><div class="evil"></div><!-- -->\n<main')
+  assert.ok(checkPage(empty, rules).some((i) => /class "evil"/.test(i.message)), '"<!-->" is an empty comment')
+  const jsonLd = html.replace('</body>', '<script type="application/ld+json">{"x": "<script src=\\"a.js\\"><div class=\\"evil\\">"}</script>\n</body>')
+  assert.deepEqual(checkPage(jsonLd, rules).map((i) => i.message),
+    ['inline script not from the design system release; use a design system component, or pass --allow-inline-script if the user approved it'],
+    'markup inside script text is not parsed as tags')
+}))
+
+test('event handlers, javascript: addresses, preloads and <base> are checked', () => withKit((kit) => {
+  const rules = { version: '9.1.0', ...loadRules(kit) }
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  const page = html.replace('<main', `<div class="nsw-card" onclick="alert(1)"></div><a class="nsw-card" href=" java\tscript:alert(1)">x</a>
+<link rel="preload" as="style" href="https://evil.example/x.css">
+<link rel="modulepreload" href="https://evil.example/x.js">
+<base href="https://evil.example/">
+<main`)
+  const messages = checkPage(page, rules).map((i) => i.message).join('\n')
+  for (const pattern of [/onclick attribute: inline script/, /javascript: address in href/,
+    /stylesheet not from the design system release: https:\/\/evil\.example\/x\.css/,
+    /script not from the design system release: https:\/\/evil\.example\/x\.js/, /<base> element/]) {
+    assert.match(messages, pattern)
+  }
+  const approvedHandler = html.replace('<main', '<div class="nsw-card" onclick="track()"></div>\n<main')
+  assert.deepEqual(checkPage(approvedHandler, { ...rules, allowInlineScripts: ['track('] }), [])
+}))
+
+test('initSite must run after the design system JavaScript has loaded', () => withKit((kit) => {
+  const rules = { version: '9.1.0', ...loadRules(kit) }
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  const main = /<script src="[^"]+main\.js"><\/script>\n<script>window\.NSW\.initSite\(\)<\/script>/
+  const tag = html.match(/<script src="[^"]+main\.js"><\/script>/)[0]
+  const early = html.replace(main, `<script>window.NSW.initSite()</script>\n${tag}`)
+  assert.match(checkPage(early, rules).map((i) => i.message).join('\n'), /initSite\(\) runs before the design system JavaScript is loaded/)
+  for (const attr of [' defer', ' async', ' type="module"']) {
+    const deferred = html.replace(tag, tag.replace('<script', `<script${attr}`))
+    assert.match(checkPage(deferred, rules).map((i) => i.message).join('\n'), /must load without defer, async or type="module"/, attr)
+  }
+}))
+
+test('reports correct line numbers', () => withKit((kit) => {
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  const page = html.replace('<main', '<div class="bad-one"></div>\n\n<div class="bad-two"></div>\n<main')
+  const line = html.slice(0, html.indexOf('<main')).split('\n').length
+  const found = checkPage(page, { version: '9.1.0', ...loadRules(kit) }).map((i) => [i.line, i.message.match(/"(bad-\w+)"/)?.[1]])
+  assert.deepEqual(found, [[line, 'bad-one'], [line + 2, 'bad-two']])
 }))
 
 test('only the Google Fonts links the release uses are accepted', () => withKit((kit) => {

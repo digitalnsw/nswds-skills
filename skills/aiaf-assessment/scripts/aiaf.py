@@ -20,6 +20,7 @@ Standard library only; Python 3.8 or later.
 """
 import argparse
 import datetime
+import http.client
 import json
 import os
 import re
@@ -100,17 +101,16 @@ def split_ref(ref):
     return m.group(1), int(m.group(2))
 
 
-def expand_sqref(sqref):
-    """'E3 E18:E20' -> ['E3', 'E18', 'E19', 'E20']"""
-    cells = []
+def sqref_ranges(sqref):
+    """'E3 E18:E20' -> [(5, 3, 5, 3), (5, 18, 5, 20)] as (first col, first row, last col,
+    last row). Ranges are kept as bounds, never expanded, so a whole-sheet range is cheap."""
+    ranges = []
     for part in sqref.split():
         start, _, end = part.partition(":")
         c0, r0 = split_ref(start)
         c1, r1 = split_ref(end or start)
-        for col in range(col_number(c0), col_number(c1) + 1):
-            for row in range(r0, r1 + 1):
-                cells.append(f"{col_letters(col)}{row}")
-    return cells
+        ranges.append((col_number(c0), r0, col_number(c1), r1))
+    return ranges
 
 
 def check_limits(infos):
@@ -185,10 +185,12 @@ class Workbook:
         try:
             check_limits(self.zip.infolist())
             # Screen every XML part, not only the ones read below, so a DTD cannot sit in an
-            # unused part and be carried into a filled workbook.
+            # unused part and be carried into a filled workbook. Screened parts are kept, so
+            # each is decompressed once.
+            self._screened = {}
             for info in self.zip.infolist():
                 if info.filename.lower().endswith((".xml", ".rels", ".vml")):
-                    self.read(info.filename)
+                    self._screened[info.filename] = self._screen(info.filename, self.raw(info))
             self.sheet_paths = self._sheet_paths()
             self.shared = self._shared_strings()
         except BaseException:
@@ -208,13 +210,30 @@ class Workbook:
         except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError) as e:
             raise WorkbookError(f"workbook part {name} is corrupt: {e}") from e
 
-    def read(self, name):
-        """A package part. Spreadsheet XML never declares a DTD, so refusing one blocks
-        entity-expansion and external-entity attacks from a crafted workbook."""
-        data = self.raw(name)
-        if re.search(rb"<!\s*(DOCTYPE|ENTITY)", data, re.I):
+    @staticmethod
+    def _screen(name, data):
+        """Spreadsheet XML is UTF-8 and never declares a DTD, so refusing anything else blocks
+        entity-expansion and external-entity attacks from a crafted workbook. The encoding is
+        checked first because the parser also accepts UTF-16, which hides a DTD from a byte
+        search."""
+        body = data[3:] if data.startswith(b"\xef\xbb\xbf") else data
+        declared = re.match(rb"\s*<\?xml[^>]*?\bencoding\s*=\s*[\"']([^\"']+)", body)
+        if b"\x00" in body or data[:2] in (b"\xff\xfe", b"\xfe\xff") or (
+                declared and declared.group(1).lower() not in (b"utf-8", b"utf8")):
+            raise WorkbookError(f"{name} is not UTF-8 XML; refusing to read it")
+        try:
+            body.decode("utf-8")
+        except UnicodeDecodeError:
+            raise WorkbookError(f"{name} is not UTF-8 XML; refusing to read it") from None
+        if re.search(rb"<!\s*(DOCTYPE|ENTITY)", body, re.I):
             raise WorkbookError(f"{name} declares a DTD or entities; refusing to read it")
         return data
+
+    def read(self, name):
+        """A screened XML package part."""
+        if name in self._screened:
+            return self._screened[name]
+        return self._screen(name, self.raw(name))
 
     def _sheet_paths(self):
         book = parse_xml(self.read("xl/workbook.xml"), "xl/workbook.xml")
@@ -266,7 +285,7 @@ class Workbook:
         return values
 
     def validations(self, name):
-        """[(cells, sheet, column, first_row, last_row)] for list dropdowns that point at a range."""
+        """[(ranges, sheet, column, first_row, last_row)] for list dropdowns that point at a range."""
         xml = self.read(self.sheet_part(name)).decode("utf-8")
         found = []
         for m in re.finditer(r"<x14:dataValidation\b.*?</x14:dataValidation>", xml, re.S):
@@ -283,7 +302,7 @@ class Workbook:
         for sqref, formula in found:
             r = re.fullmatch(r"'?([^'!]+)'?!\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)", formula.strip())
             if r and r.group(2) == r.group(4):
-                out.append((expand_sqref(sqref), r.group(1), r.group(2), int(r.group(3)), int(r.group(5))))
+                out.append((sqref_ranges(sqref), r.group(1), r.group(2), int(r.group(3)), int(r.group(5))))
         return out
 
 
@@ -312,11 +331,13 @@ def load_questions(workbook):
     if not labels:
         raise WorkbookError("no Q1, Q2 … labels found on the Assessment sheet")
     by_row = {}
-    for cells, sheet, col, first, last in workbook.validations("Assessment"):
+    for ranges, sheet, col, first, last in workbook.validations("Assessment"):
         if sheet != "Questions" or col != header["option"]:
             continue
-        for cell in cells:
-            by_row.setdefault(split_ref(cell)[1], (cell, first, last))
+        for c0, r0, _, r1 in ranges:
+            for row in labels:
+                if r0 <= row <= r1:
+                    by_row.setdefault(row, (f"{col_letters(c0)}{row}", first, last))
 
     questions = []
     for row in sorted(labels):
@@ -424,7 +445,11 @@ def force_recalc(xml):
     """Make Excel recalculate every formula on open, whatever calcPr said before."""
     calc = re.search(r"<calcPr\b[^>]*?/?>", xml)
     if not calc:
-        return xml.replace("</workbook>", '<calcPr fullCalcOnLoad="1"/></workbook>')
+        # calcPr follows definedNames and precedes these in the workbook schema.
+        later = re.search(r"<(oleSize|customWorkbookViews|pivotCaches|smartTagPr|smartTagTypes|webPublishing"
+                          r"|fileRecoveryPr|webPublishObjects|extLst)\b", xml)
+        at = later.start() if later else xml.rindex("</workbook>")
+        return xml[:at] + '<calcPr fullCalcOnLoad="1"/>' + xml[at:]
     tag = re.sub(r'\sfullCalcOnLoad\s*=\s*("[^"]*"|\'[^\']*\')', "", calc.group(0))
     tag = re.sub(r"^<calcPr\b", '<calcPr fullCalcOnLoad="1"', tag)
     return xml[:calc.start()] + tag + xml[calc.end():]
@@ -454,14 +479,17 @@ def fill(template, answers_path, out_path):
         edits["xl/workbook.xml"] = force_recalc(book.read("xl/workbook.xml").decode("utf-8"))
 
         out_path = os.path.abspath(out_path)
-        if os.path.abspath(template) == out_path:
+        if os.path.abspath(template) == out_path or (os.path.exists(out_path) and os.path.samefile(template, out_path)):
             raise WorkbookError("--out must be a new file, not the template")
         fd, tmp = tempfile.mkstemp(suffix=".xlsx", dir=os.path.dirname(out_path) or ".")
         os.close(fd)
         try:
             with zipfile.ZipFile(tmp, "w") as out:
                 for info in book.zip.infolist():
-                    data_bytes = edits[info.filename].encode("utf-8") if info.filename in edits else book.raw(info)
+                    if info.filename in edits:
+                        data_bytes = edits[info.filename].encode("utf-8")
+                    else:
+                        data_bytes = book._screened.get(info.filename) or book.raw(info)
                     out.writestr(info, data_bytes, compress_type=info.compress_type)
             os.replace(tmp, out_path)
         except BaseException:
@@ -509,6 +537,8 @@ def fetch(url, timeout, limit):
         with urllib.request.build_opener(TrustedRedirects).open(request, timeout=timeout) as response:
             require_trusted(response.geturl())
             return read_limited(response, limit, url)
+    except http.client.HTTPException as e:
+        raise WorkbookError(f"could not download {url}: {e!r}") from e
     except urllib.error.URLError as e:
         if not isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
             raise

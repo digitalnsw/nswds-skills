@@ -321,6 +321,16 @@ class AiafTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("xl/sharedStrings.xml declares a DTD or entities", err)
 
+    def test_refuses_a_dtd_in_a_part_the_script_never_reads(self):
+        path = self.rewrite_part("xl/styles.xml", lambda data: b'<?xml version="1.0"?><!DOCTYPE s [<!ENTITY a "x">]>' + data)
+        for args in (("questions", "--workbook", path),
+                     ("fill", "--workbook", path, "--answers", self.write_answers(GOOD),
+                      "--out", os.path.join(self.dir.name, "out.xlsx"))):
+            code, _, err = self.run_cli(*args)
+            self.assertEqual(code, 1, args[0])
+            self.assertIn("xl/styles.xml declares a DTD or entities", err)
+        self.assertFalse(os.path.exists(os.path.join(self.dir.name, "out.xlsx")))
+
     def test_questions_command_prints_text_and_json(self):
         code, out, _ = self.run_cli("questions", "--workbook", self.template)
         self.assertEqual(code, 0)

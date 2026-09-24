@@ -350,7 +350,9 @@ export const styleKey = (value) => value.replace(/url\([^)]*\)/g, 'url()').repla
 export function themeOnly(css) {
   const body = css.replace(/\/\*[\s\S]*?\*\//g, '')
   const blocks = [...body.matchAll(/\{([^{}]*)\}/g)]
-  if (!blocks.length || /@/.test(body) || body.replace(/\{[^{}]*\}/g, '').includes('}')) return false
+  // Anything left after removing complete blocks must not open or close a rule: a browser
+  // closes an unfinished rule at the end of the stylesheet, so a stray "{" would apply.
+  if (!blocks.length || /@/.test(body) || /[{}]/.test(body.replace(/\{[^{}]*\}/g, ''))) return false
   return blocks.every((b) => b[1].split(';').map((d) => d.trim()).filter(Boolean).every((d) => /^--nsw-[a-z0-9-]+\s*:/.test(d)))
 }
 

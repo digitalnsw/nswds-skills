@@ -229,6 +229,9 @@ test('accepts only --nsw-* variables as theming', () => {
   assert.ok(!themeOnly('.x { --my-var: 1 }'))
   assert.ok(!themeOnly('@media (min-width: 1px) { :root { --nsw-brand-dark: #000 } }'))
   assert.ok(!themeOnly(''))
+  assert.ok(!themeOnly(':root { --nsw-brand-dark: #002664; } .evil { color: red'), 'an unclosed rule is not theming')
+  assert.ok(!themeOnly(':root { --nsw-brand-dark: #002664; } }'), 'a stray closing brace is not theming')
+  assert.ok(!themeOnly(':root { --nsw-brand-dark: { color: red } }'), 'nested blocks are not theming')
   assert.equal(styleKey(' background-image : url(https://a/b.jpg) ; '), 'background-image:url()')
 })
 

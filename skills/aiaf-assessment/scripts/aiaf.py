@@ -184,6 +184,11 @@ class Workbook:
             raise WorkbookError(f"{path} is not an Excel workbook: {e}")
         try:
             check_limits(self.zip.infolist())
+            # Screen every XML part, not only the ones read below, so a DTD cannot sit in an
+            # unused part and be carried into a filled workbook.
+            for info in self.zip.infolist():
+                if info.filename.lower().endswith((".xml", ".rels", ".vml")):
+                    self.read(info.filename)
             self.sheet_paths = self._sheet_paths()
             self.shared = self._shared_strings()
         except BaseException:

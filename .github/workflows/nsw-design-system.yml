@@ -1,0 +1,30 @@
+name: NSW Design System skill tests
+on:
+  pull_request:
+    paths:
+      - 'skills/nsw-design-system/**'
+      - '.github/workflows/nsw-design-system.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/nsw-design-system/**'
+      - '.github/workflows/nsw-design-system.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        # 18 is the minimum the skill documents; 24 matches the repository.
+        node-version: ['18', '24']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: node --test skills/nsw-design-system/scripts/nswds.test.mjs

@@ -2,7 +2,7 @@
 
 Agent skills for developers building NSW Government digital services, maintained by Digital NSW.
 
-A skill is a set of instructions that your AI coding agent loads when a task matches it. Install these and your agent will check content against the Australian Government Style Manual, audit pages against WCAG, review dependency updates properly and more, without you writing the prompt each time. They work with Claude Code, Cursor, GitHub Copilot and other agents that support skills.
+A skill is a set of instructions that your AI coding agent loads when a task matches it. Install these and your agent will build pages with the NSW Design System, draft your NSW AI Assessment Framework assessment, check content against the Australian Government Style Manual, audit pages against WCAG and more, without you writing the prompt each time. They work with Claude Code, Cursor, GitHub Copilot and other agents that support skills.
 
 ## Get started
 
@@ -14,19 +14,26 @@ npx skills add digitalnsw/nswds-skills
 
 Then ask your agent to do the work. It picks the right skill for you:
 
+> Build a landing page for our grants program with the NSW Design System.
+
+> Draft an AIAF assessment for the chatbot we are piloting on the contact page.
+
 > Audit the apply journey on http://localhost:3000 against WCAG 2.2 AA.
-
-> Check the content in `src/pages/` against the Australian Government Style Manual.
-
-> Is Renovate PR 214 safe to merge?
 
 To install one skill only:
 
 ```bash
-npx skills add digitalnsw/nswds-skills --skill wcag-technical-audit
+npx skills add digitalnsw/nswds-skills --skill nsw-design-system
 ```
 
 ## Skills
+
+### NSW Government standards
+
+| Skill | What it does | Try asking |
+| --- | --- | --- |
+| [nsw-design-system](skills/nsw-design-system/SKILL.md) | Builds websites, pages and components using only the [NSW Design System](https://designsystem.nsw.gov.au/), with its latest release as the single source of truth. Takes markup, page templates and guidance from the pinned release rather than from memory, and checks every page for custom CSS, invented classes and scripts that are not from the design system. Needs Node.js 18 or later. | "Build a content page for our service using the NSW Design System." |
+| [aiaf-assessment](skills/aiaf-assessment/SKILL.md) | Drafts a [NSW AI Assessment Framework](https://www.digital.nsw.gov.au/policy/artificial-intelligence/ai-governance-assurance-and-frameworks/nsw-ai-assessment-framework) assessment. Downloads the current official workbook, chooses an answer for each question from a description of the AI system, and fills them in so Excel calculates the risk band and registers. Lists every assumption for your subject-matter experts to check. Needs Python 3.8 or later. | "Fill in the AIAF for our document summarisation tool." |
 
 ### Content and accessibility
 
@@ -100,7 +107,7 @@ Tell us what worked, what didn't and what skill your team needs next by [opening
 
 ## Contributing
 
-Skills must work with any agent and in any organisation. They must not reference specific repositories, organisations or machines. Supporting material goes in the skill's `references/` directory and is linked from its `SKILL.md`.
+Skills must work with any agent. They must not reference private repositories, internal systems or specific machines. A skill built on a published standard, such as the NSW Design System or the Australian Government Style Manual, names that standard's public source as its source of truth. Supporting material goes in the skill's `references/` directory and is linked from its `SKILL.md`.
 
 Workflow packages target one agent by design but follow the same rule. Each has its own README, installer and tests.
 

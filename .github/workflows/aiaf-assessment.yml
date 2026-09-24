@@ -1,0 +1,41 @@
+name: AIAF assessment skill tests
+on:
+  pull_request:
+    paths:
+      - 'skills/aiaf-assessment/**'
+      - '.github/workflows/aiaf-assessment.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/aiaf-assessment/**'
+      - '.github/workflows/aiaf-assessment.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s skills/aiaf-assessment/scripts -v
+  # Downloads the workbook Digital NSW currently publishes and runs the layout check
+  # against it, so a change to the official workbook fails here rather than for users.
+  official-workbook:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download the current official workbook
+        run: python3 skills/aiaf-assessment/scripts/aiaf.py download --dir "$RUNNER_TEMP/aiaf"
+      - name: Test against it
+        run: |
+          AIAF_WORKBOOK="$(ls "$RUNNER_TEMP"/aiaf/*.xlsx)" \
+            python3 -m unittest -v test_aiaf.OfficialWorkbookTest
+        working-directory: skills/aiaf-assessment/scripts

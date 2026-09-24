@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -394,9 +394,7 @@ test('comment markers inside attributes and script text do not hide markup', () 
   const empty = html.replace('<main', '<!--><div class="evil"></div><!-- -->\n<main')
   assert.ok(checkPage(empty, rules).some((i) => /class "evil"/.test(i.message)), '"<!-->" is an empty comment')
   const jsonLd = html.replace('</body>', '<script type="application/ld+json">{"x": "<script src=\\"a.js\\"><div class=\\"evil\\">"}</script>\n</body>')
-  assert.deepEqual(checkPage(jsonLd, rules).map((i) => i.message),
-    ['inline script not from the design system release; use a design system component, or pass --allow-inline-script if the user approved it'],
-    'markup inside script text is not parsed as tags')
+  assert.deepEqual(checkPage(jsonLd, rules), [], 'markup inside script text is not parsed as tags, and JSON-LD never runs')
 }))
 
 test('event handlers, javascript: addresses, preloads and <base> are checked', () => withKit((kit) => {
@@ -475,9 +473,9 @@ test('framework bundles and script types', () => withKit((kit) => {
   const { html } = standaloneTemplate(templatePage, '9.1.0')
   const pair = /<script src="[^"]+main\.js"><\/script>\n<script>window\.NSW\.initSite\(\)<\/script>/
   const bundled = html.replace(pair, '<script type="module" src="/assets/index-abc123.js"></script>')
-  assert.deepEqual(checkPage(bundled, { ...rules, designSystemJs: ['/assets/'] }), [], 'a bundle may be a module that calls initSite itself')
+  assert.deepEqual(checkPage(bundled, { ...rules, designSystemBundle: ['/assets/'] }), [], 'a bundle may be a module that calls initSite itself')
   const earlyForBundle = html.replace(pair, '<script type="module" src="/assets/index.js"></script>\n<script>window.NSW.initSite()</script>')
-  assert.match(checkPage(earlyForBundle, { ...rules, designSystemJs: ['/assets/'] }).map((i) => i.message).join('\n'),
+  assert.match(checkPage(earlyForBundle, { ...rules, designSystemBundle: ['/assets/'] }).map((i) => i.message).join('\n'),
     /initSite\(\) runs before the design system JavaScript is loaded/, 'an inline initSite cannot follow a deferred bundle')
   const plain = html.replace(/<script src="([^"]+main\.js)">/, '<script type="text/plain" src="$1">')
   assert.match(checkPage(plain, rules).map((i) => i.message).join('\n'), /type="text\/plain", so the browser never runs it/)
@@ -487,13 +485,63 @@ test('framework bundles and script types', () => withKit((kit) => {
   assert.deepEqual(checkPage(target, rules), [], '<base target> without href is fine')
 }))
 
+test('SVG and MathML contents are markup, even inside raw-text elements', () => withKit((kit) => {
+  const rules = { version: '9.1.0', ...loadRules(kit) }
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  const messages = (markup) => checkPage(html.replace('<main', `${markup}\n<main`), rules).map((i) => i.message).join('\n')
+  assert.match(messages('<svg><title><script src="https://evil.example/x.js"></script></title></svg>'), /script not from the design system release/)
+  assert.match(messages('<svg><iframe><script href="https://evil.example/x.js"></script></iframe></svg>'), /script not from the design system release/)
+  assert.match(messages('<math><textarea><div style="color:red"></div></textarea></math>'), /style attribute "color:red"/)
+  assert.match(messages('<svg><style>.evil { color: red }</style></svg>'), /<style> element: custom CSS/, 'SVG style text is still checked')
+  assert.match(messages('<svg/><title><div style="color:red"></div></title>'), /^$/, 'a self-closing <svg/> does not start foreign content')
+  assert.match(messages('<svg></svg><textarea><div style="color:red"></div></textarea>'), /^$/, 'foreign content ends at </svg>')
+}))
+
+test('SVG animation cannot set a javascript: address', () => withKit((kit) => {
+  const rules = { version: '9.1.0', ...loadRules(kit) }
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  for (const anim of ['<animate attributeName="href" values="#a;javascript:alert(1)"/>', '<set attributeName="xlink:href" to=" javascript:alert(1)"/>']) {
+    const page = html.replace('<main', `<svg><a class="nsw-card">${anim}<text>x</text></a></svg>\n<main`)
+    assert.match(checkPage(page, rules).map((i) => i.message).join('\n'), /javascript: address in <(animate|set)>/, anim)
+  }
+}))
+
+test('a copy of main.js still needs initSite; only a bundle may skip it', () => withKit((kit) => {
+  const rules = { version: '9.1.0', ...loadRules(kit) }
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  const copy = html.replace(/<script src="[^"]+main\.js"><\/script>\n<script>window\.NSW\.initSite\(\)<\/script>/, '<script src="/js/main.js"></script>')
+  assert.match(checkPage(copy, { ...rules, designSystemJs: ['/js/main.js'] }).map((i) => i.message).join('\n'), /initSite\(\) is never called/)
+  const deferred = copy.replace('<script src="/js/main.js">', '<script defer src="/js/main.js">')
+  assert.match(checkPage(deferred, { ...rules, designSystemJs: ['/js/main.js'] }).map((i) => i.message).join('\n'), /must load without defer/)
+  assert.deepEqual(checkPage(copy.replace('</body>', '<script>window.NSW.initSite()</script>\n</body>'), { ...rules, designSystemJs: ['/js/main.js'] }), [])
+}))
+
+test('presentational attributes are flagged unless the release uses them', () => withKit((kit) => {
+  const rules = { version: '9.1.0', ...loadRules(kit) }
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  const page = html.replace('<main', '<div class="nsw-card" bgcolor="red" align="center"><font color="red" face="Comic Sans MS">x</font></div><input class="nsw-card" size="20">\n<main')
+  const messages = checkPage(page, rules).map((i) => i.message).join('\n')
+  for (const pattern of [/bgcolor attribute on <div>/, /align attribute on <div>/, /color attribute on <font>/, /face attribute on <font>/]) assert.match(messages, pattern)
+  assert.doesNotMatch(messages, /size attribute on <input>/, 'size on an input is not presentational')
+  assert.deepEqual(checkPage(page, { ...rules, presentational: new Set(['div bgcolor', 'div align', 'font color', 'font face']) }), [],
+    'pairs the release itself uses are allowed')
+}))
+
+test('legacy references before "=" or a letter stay as written', () => {
+  assert.equal(decodeReferences('?a=1&lt=2&b=&amp;&gtx&lt;'), '?a=1&lt=2&b=&&gtx<')
+  assert.equal(decodeReferences('&amp &lt'), '& <')
+})
+
 test('rules are cached beside the kit', () => withKit((kit) => {
+  writeFileSync(join(kit, '.rules-2.json'), '{}')
   const first = loadRules(kit)
-  assert.ok(existsSync(join(kit, '.rules-2.json')))
+  assert.ok(!existsSync(join(kit, '.rules-2.json')), 'caches built by older code are removed')
+  const cached = readdirSync(kit).filter((f) => /^\.rules-[0-9a-f]{16}\.json$/.test(f))
+  assert.equal(cached.length, 1, 'the cache name carries a hash of the script')
   writeFileSync(join(kit, 'css', 'main.css'), '.changed-after-cache{}')
   const second = loadRules(kit)
   assert.deepEqual([...second.classes].sort(), [...first.classes].sort(), 'the cached rules are used')
-  writeFileSync(join(kit, '.rules-2.json'), 'not json')
+  writeFileSync(join(kit, cached[0]), 'not json')
   assert.ok(loadRules(kit).classes.has('changed-after-cache'), 'an unreadable cache is rebuilt')
 }))
 

@@ -67,7 +67,7 @@ If the page needs something the design system does not provide, stop and tell th
 
 ## 5. Check and verify
 
-1. Run `check` on every page you created or changed, with the pinned `--version`. In an npm and Sass project, name your compiled design system files with `--design-system-css` and `--design-system-js`. Fix every error until it reports `uses only NSW Design System`. For framework projects, check the rendered HTML (build output or the served page), not the source.
+1. Run `check` on every page you created or changed, with the pinned `--version`. In an npm and Sass project, name your compiled design system stylesheet with `--design-system-css` and your copy of `main.js` with `--design-system-js`. For a framework build that bundles the design system and calls `window.NSW.initSite()` in its own code, use `--design-system-bundle` instead. Fix every error until it reports `uses only NSW Design System`. For framework projects, check the rendered HTML (build output or the served page), not the source.
 2. Open the page in a browser. Confirm the release CSS and JavaScript load without console errors, interactive components work, and the layout holds at mobile and desktop widths.
 3. Tab through the page. Every interactive element must be reachable, visible when focused and usable with the keyboard.
 4. For a full accessibility audit, use the `wcag-technical-audit` skill. For content, use the `australian-style-manual` skill.

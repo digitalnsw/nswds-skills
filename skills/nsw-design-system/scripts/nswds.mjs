@@ -3,10 +3,11 @@
 // the design system itself, never from memory. The HTML starter kit committed at
 // each release tag of digitalnsw/nsw-design-system is the built documentation site
 // for that release: rendered component examples, page templates and the release CSS.
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { inflateRawSync } from 'node:zlib'
 
 const REPO = 'digitalnsw/nsw-design-system'
@@ -339,13 +340,17 @@ const NAMED = {
   lcub: '{', lbrace: '{', verbar: '|', vert: '|', VerticalLine: '|', rcub: '}', rbrace: '}', nbsp: ' ',
 }
 const LEGACY = new Set(['amp', 'AMP', 'lt', 'LT', 'gt', 'GT', 'quot', 'QUOT', 'nbsp'])
+// Decodes references in an attribute value. As in a browser, a legacy name without ";" is
+// left alone when "=" or a letter or digit follows it (so "?a=1&lt=2" keeps "&lt").
 export const decodeReferences = (value) => value.replace(/&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|([A-Za-z][A-Za-z0-9]*));?/g,
-  (match, dec, hex, name) => {
+  (match, dec, hex, name, offset) => {
     if (dec !== undefined || hex !== undefined) {
       const code = parseInt(dec ?? hex, dec !== undefined ? 10 : 16)
       return code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff) ? String.fromCodePoint(code) : '�'
     }
-    return Object.prototype.hasOwnProperty.call(NAMED, name) && (match.endsWith(';') || LEGACY.has(name)) ? NAMED[name] : match
+    if (!Object.prototype.hasOwnProperty.call(NAMED, name)) return match
+    if (match.endsWith(';')) return NAMED[name]
+    return LEGACY.has(name) && !/[=A-Za-z0-9]/.test(value[offset + match.length] ?? '') ? NAMED[name] : match
   })
 
 // Reads a start or end tag beginning at "<" (at) whose name starts at `from`. Returns null
@@ -356,9 +361,10 @@ function readTag(html, at, from) {
   const name = html.slice(from, i).toLowerCase()
   const attrs = new Map()
   for (;;) {
-    while (i < html.length && (SPACE.test(html[i]) || html[i] === '/')) i++
+    let slash = false
+    while (i < html.length && (SPACE.test(html[i]) || html[i] === '/')) slash = html[i++] === '/'
     if (i >= html.length) return null
-    if (html[i] === '>') return { name, attrs, index: at, end: i + 1 }
+    if (html[i] === '>') return { name, attrs, index: at, end: i + 1, selfClosing: slash }
     const nameStart = i
     i++ // the first character belongs to the name, even "="
     while (i < html.length && !SPACE.test(html[i]) && !'/>='.includes(html[i])) i++
@@ -383,8 +389,13 @@ function readTag(html, at, from) {
   }
 }
 
+// Inside SVG and MathML (foreign content) a browser does not switch to raw text, so the
+// contents of title, iframe, textarea and the like are markup there. Their text is still
+// captured (a style's CSS is checked), but the contents are read as tags too.
+const FOREIGN = new Set(['svg', 'math'])
 export function openTags(html) {
   const tags = []
+  let foreign = 0
   let i = 0
   while (i < html.length) {
     const lt = html.indexOf('<', i)
@@ -408,6 +419,7 @@ export function openTags(html) {
     if (next === '/') {
       if (html[lt + 2] === '>') { i = lt + 3; continue }
       const tag = readTag(html, lt, lt + 2) // an end tag: its attributes are read, then ignored
+      if (tag && FOREIGN.has(tag.name) && foreign > 0) foreign--
       i = tag ? tag.end : html.length
       continue
     }
@@ -416,14 +428,25 @@ export function openTags(html) {
     if (!tag) break
     tags.push(tag)
     i = tag.end
+    if (FOREIGN.has(tag.name) && !tag.selfClosing) foreign++
     if (RAW_TEXT.has(tag.name)) {
       const close = html.slice(i).search(new RegExp(`</${tag.name}[\\t\\n\\f\\r />]`, 'i'))
       tag.content = close < 0 ? html.slice(i) : html.slice(i, i + close)
-      i += tag.content.length
+      if (!foreign) i += tag.content.length
     }
   }
   return tags
 }
+// Old presentational attributes restyle a page without CSS. Some apply to any element;
+// others only to the elements named.
+const PRESENTATIONAL = ['align', 'background', 'bgcolor', 'bordercolor', 'cellpadding', 'cellspacing', 'clear', 'compact',
+  'frameborder', 'hspace', 'marginheight', 'marginwidth', 'noshade', 'nowrap', 'valign', 'vspace']
+const PRESENTATIONAL_ON = {
+  font: ['color', 'face', 'size'], basefont: ['color', 'face', 'size'], hr: ['color', 'size'],
+  body: ['text', 'link', 'vlink', 'alink'], table: ['border', 'frame', 'rules'], img: ['border'], object: ['border'],
+}
+const isJavascript = (value) => /^javascript:/i.test(value.replace(/[\u0000-\u0020]/g, ''))
+const isPresentational = (tag, attr) => PRESENTATIONAL.includes(attr) || (PRESENTATIONAL_ON[tag] ?? []).includes(attr)
 // Script types a browser runs as classic scripts (type="module" is handled separately).
 const RUNNABLE_TYPES = new Set(['', 'text/javascript', 'application/javascript', 'application/ecmascript',
   'application/x-ecmascript', 'application/x-javascript', 'text/ecmascript', 'text/javascript1.0',
@@ -496,19 +519,26 @@ export function approved(url, approvals) {
 
 // Class names, inline style values and Google Fonts links the release's components, core
 // styles and guides use. They depend only on the release, so they are cached beside it.
-// Change the file name whenever the way rules are built changes, so old caches are ignored.
-const RULES_CACHE = '.rules-2.json'
+// The cache name includes a hash of this script, so a change to how rules are built (or to
+// the tokenizer) never reuses rules built by older code.
+const RULES_CACHE = `.rules-${createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex').slice(0, 16)}.json`
 export function loadRules(kit) {
   const cache = join(kit, RULES_CACHE)
   try {
     const saved = JSON.parse(readFileSync(cache, 'utf8'))
-    return { classes: new Set(saved.classes), styles: new Set(saved.styles), fonts: new Set(saved.fonts) }
+    return {
+      classes: new Set(saved.classes), styles: new Set(saved.styles), fonts: new Set(saved.fonts),
+      presentational: new Set(saved.presentational),
+    }
   } catch {
     // Not cached yet, or unreadable: build the rules.
   }
   const rules = buildRules(kit)
   try {
-    writeFileSync(cache, JSON.stringify({ classes: [...rules.classes], styles: [...rules.styles], fonts: [...rules.fonts] }))
+    for (const old of readdirSync(kit).filter((f) => /^\.rules-.*\.json$/.test(f) && f !== RULES_CACHE)) rmSync(join(kit, old), { force: true })
+    writeFileSync(cache, JSON.stringify({
+      classes: [...rules.classes], styles: [...rules.styles], fonts: [...rules.fonts], presentational: [...rules.presentational],
+    }))
   } catch {
     // A read-only cache still works; the rules are rebuilt next time.
   }
@@ -519,6 +549,7 @@ function buildRules(kit) {
   const classes = cssClasses(readFileSync(join(kit, 'css', 'main.css'), 'utf8'))
   const styles = new Set()
   const fonts = new Set()
+  const presentational = new Set()
   const walk = (dir) => {
     if (!existsSync(dir)) return
     for (const d of readdirSync(dir, { withFileTypes: true })) {
@@ -533,6 +564,7 @@ function buildRules(kit) {
           if (tag.name === 'link' && href?.startsWith('https://fonts.googleapis.com/')) fonts.add(href)
           for (const name of classesOf(tag)) if (!name.startsWith('nsw-docs') && !name.startsWith('hljs')) classes.add(name)
           if (tag.attrs.has('style')) styles.add(styleKey(tag.attrs.get('style')))
+          for (const attr of tag.attrs.keys()) if (isPresentational(tag.name, attr)) presentational.add(`${tag.name} ${attr}`)
         }
       }
     }
@@ -540,7 +572,7 @@ function buildRules(kit) {
   // Page templates are not a source: some are demonstrations whose classes only work with
   // their own custom CSS.
   for (const group of ['components', 'core', join('docs', 'content')]) walk(join(kit, group))
-  return { classes, styles, fonts }
+  return { classes, styles, fonts, presentational }
 }
 
 // Flags anything on a page that does not come from the design system release.
@@ -549,8 +581,9 @@ function buildRules(kit) {
 // accepted but never count as the design system itself. Inline scripts other than the
 // initSite call fail unless their content contains an allowInlineScripts entry.
 export function checkPage(html, {
-  version, classes, styles = new Set(), fonts = new Set(),
-  designSystemCss = [], designSystemJs = [], allowStylesheets = [], allowScripts = [], allowInlineScripts = [],
+  version, classes, styles = new Set(), fonts = new Set(), presentational = new Set(),
+  designSystemCss = [], designSystemJs = [], designSystemBundle = [], allowStylesheets = [], allowScripts = [],
+  allowInlineScripts = [],
 }) {
   const issues = []
   const newlines = []
@@ -569,7 +602,8 @@ export function checkPage(html, {
   // Blank patterns would approve everything, so they are ignored.
   const nonBlank = (patterns) => patterns.filter((p) => typeof p === 'string' && p.trim() !== '')
   const approvals = (patterns) => nonBlank(patterns).map(parseApproval)
-  const [dsCss, dsJs, otherCss, otherJs] = [designSystemCss, designSystemJs, allowStylesheets, allowScripts].map(approvals)
+  const [dsCss, dsJs, dsBundle, otherCss, otherJs] = [designSystemCss, designSystemJs, designSystemBundle, allowStylesheets,
+    allowScripts].map(approvals)
   const inlineApproved = (content) => nonBlank(allowInlineScripts).some((p) => content.includes(p))
   const dsAsset = (url, kind) => {
     const m = url.match(/^https:\/\/cdn\.jsdelivr\.net\/npm\/nsw-design-system@([^/]+)\/dist\/(css|js)\/([a-z.]+)$/)
@@ -589,12 +623,13 @@ export function checkPage(html, {
     add('error', tag.index, `stylesheet not from the design system release: ${href || '(no href)'}`)
     return false
   }
-  // Returns true for the release's own file or a designated design system bundle, false for
-  // an approved extra, and reports anything else.
+  // Returns 'main' for the release's main.js or a copy of it, 'bundle' for a self-initialising
+  // bundle, false for an approved extra, and reports anything else.
   const scriptSource = (tag, src) => {
     const asset = dsAsset(src, 'js')
-    if (asset && ['main.js', 'main.min.js'].includes(asset.file)) { pinned(tag.index, asset); return true }
-    if (src && approved(src, dsJs)) return true
+    if (asset && ['main.js', 'main.min.js'].includes(asset.file)) { pinned(tag.index, asset); return 'main' }
+    if (src && approved(src, dsJs)) return 'main'
+    if (src && approved(src, dsBundle)) return 'bundle'
     if (src && approved(src, otherJs)) return false
     add('error', tag.index, `script not from the design system release: ${src || '(empty src)'}`)
     return false
@@ -605,9 +640,17 @@ export function checkPage(html, {
       if (name.startsWith('on') && !inlineApproved(value)) {
         add('error', tag.index, `${name} attribute: inline script not from the design system release; use a design system component, or pass --allow-inline-script if the user approved it`)
       }
-      if (['href', 'src', 'action', 'formaction', 'xlink:href'].includes(name)
-        && /^javascript:/i.test(value.replace(/[\u0000-\u0020]/g, '')) && !inlineApproved(value)) {
+      if (['href', 'src', 'action', 'formaction', 'xlink:href'].includes(name) && isJavascript(value) && !inlineApproved(value)) {
         add('error', tag.index, `javascript: address in ${name}: inline script not from the design system release`)
+      }
+    }
+    // SVG animation can set a link's address: <animate attributeName="href" values="javascript:…">.
+    if (['animate', 'set'].includes(tag.name) && ['href', 'xlink:href'].includes((tag.attrs.get('attributename') ?? '').trim().toLowerCase())) {
+      for (const name of ['values', 'to', 'from', 'by']) {
+        const value = tag.attrs.get(name) ?? ''
+        if (value.split(';').some(isJavascript) && !inlineApproved(value)) {
+          add('error', tag.index, `javascript: address in <${tag.name}> ${name}: inline script not from the design system release`)
+        }
       }
     }
   }
@@ -628,6 +671,13 @@ export function checkPage(html, {
   for (const tag of tags.filter((t) => t.name === 'style')) {
     if (!themeOnly(tag.content)) add('error', tag.index, '<style> element: custom CSS is not allowed; only --nsw-* theming variables may be set')
   }
+  for (const tag of tags) {
+    for (const attr of tag.attrs.keys()) {
+      if (isPresentational(tag.name, attr) && !presentational.has(`${tag.name} ${attr}`)) {
+        add('error', tag.index, `${attr} attribute on <${tag.name}>: presentational styling is not allowed; use design system classes`)
+      }
+    }
+  }
   for (const tag of tags.filter((t) => t.attrs.has('style'))) {
     const value = tag.attrs.get('style')
     if (!styles.has(styleKey(value)) && !themeOnly(`x{${value}}`)) add('error', tag.index, `style attribute "${value}" is not used by the design system; use design system classes`)
@@ -642,9 +692,10 @@ export function checkPage(html, {
     else if (rel.includes('modulepreload') || (rel.some((r) => ['preload', 'prefetch'].includes(r)) && as === 'script')) scriptSource(tag, href)
   }
   if (!stylesheet) add('error', 0, `no design system stylesheet; link ${cdn(version, 'css/main.css')} or pass --design-system-css for your compiled design system bundle`)
-  // The release's main.js needs an inline window.NSW.initSite() after it. A designated
-  // bundle (a framework build) may call initSite itself and may load as a module.
-  let release = false
+  // The release's main.js, or a copy named with --design-system-js, needs an inline
+  // window.NSW.initSite() after it. A bundle named with --design-system-bundle (a framework
+  // build) calls initSite itself and may load as a module.
+  let plain = false
   let bundle = false
   let ready = false
   let init = false
@@ -655,21 +706,22 @@ export function checkPage(html, {
     const type = (tag.attrs.get('type') ?? '').trim().toLowerCase()
     const runs = RUNNABLE_TYPES.has(type) || type === 'module'
     if (src !== undefined) {
-      const asset = dsAsset(src, 'js')
-      const isRelease = Boolean(asset && ['main.js', 'main.min.js'].includes(asset.file))
-      if (!scriptSource(tag, src)) continue
+      const kind = scriptSource(tag, src)
+      if (!kind) continue
       if (!runs) {
         add('error', tag.index, `design system JavaScript has type="${type}", so the browser never runs it`)
         continue
       }
       const deferred = tag.attrs.has('defer') || tag.attrs.has('async') || type === 'module'
-      if (isRelease) {
-        release = true
-        if (deferred) add('error', tag.index, 'design system JavaScript must load without defer, async or type="module", or window.NSW.initSite() runs before it')
-      } else {
+      if (kind === 'bundle') {
         bundle = true
+      } else {
+        plain = true
+        if (deferred) add('error', tag.index, 'design system JavaScript must load without defer, async or type="module", or window.NSW.initSite() runs before it')
       }
       if (!deferred) ready = true
+    } else if (!runs) {
+      continue // data blocks such as JSON-LD structured data never run
     } else if (/^\s*window\.NSW\.initSite\(\);?\s*$/.test(tag.content)) {
       init = true
       if (!ready && initTooEarly === null) initTooEarly = tag.index
@@ -677,9 +729,9 @@ export function checkPage(html, {
       add('error', tag.index, 'inline script not from the design system release; use a design system component, or pass --allow-inline-script if the user approved it')
     }
   }
-  const script = release || bundle
+  const script = plain || bundle
   const hooks = tags.some((t) => classesOf(t).some((name) => name.startsWith('js-')))
-  if (release && !bundle && !init) add('error', 0, 'design system JavaScript is loaded but window.NSW.initSite() is never called')
+  if (plain && !bundle && !init) add('error', 0, 'design system JavaScript is loaded but window.NSW.initSite() is never called')
   if (script && initTooEarly !== null) add('error', initTooEarly, 'window.NSW.initSite() runs before the design system JavaScript is loaded; call it after the script')
   if (!script && init) add('error', 0, 'window.NSW.initSite() is called but the design system JavaScript is not loaded')
   if (!script && hooks) add('error', 0, 'page uses js- hooks but does not load the design system JavaScript')
@@ -695,7 +747,10 @@ export function checkPage(html, {
 }
 
 function parseArgs(argv) {
-  const options = { positional: [], designSystemCss: [], designSystemJs: [], allowStylesheets: [], allowScripts: [], allowInlineScripts: [] }
+  const options = {
+    positional: [], designSystemCss: [], designSystemJs: [], designSystemBundle: [], allowStylesheets: [], allowScripts: [],
+    allowInlineScripts: [],
+  }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     const value = () => {
@@ -712,6 +767,7 @@ function parseArgs(argv) {
     else if (arg === '--force') options.force = true
     else if (arg === '--design-system-css') options.designSystemCss.push(url())
     else if (arg === '--design-system-js') options.designSystemJs.push(url())
+    else if (arg === '--design-system-bundle') options.designSystemBundle.push(url())
     else if (arg === '--allow-stylesheet') options.allowStylesheets.push(url())
     else if (arg === '--allow-script') options.allowScripts.push(url())
     else if (arg === '--allow-inline-script') options.allowInlineScripts.push(value())
@@ -734,7 +790,8 @@ const USAGE = `Usage: node nswds.mjs <command> [options]
 Options:
   --version <x.y.z>              use this release instead of the latest
   --design-system-css <url>      your compiled design system stylesheet (npm and Sass build)
-  --design-system-js <url>       your bundled design system JavaScript
+  --design-system-js <url>       your copy of the release main.js (followed by window.NSW.initSite())
+  --design-system-bundle <url>   a build that bundles the design system and calls initSite itself
   --allow-stylesheet <url>       an approved third-party stylesheet
   --allow-script <url>           an approved third-party script
                                  <url> is an exact https:// address (query included), an https:// path ending in / for
@@ -808,6 +865,7 @@ async function main(argv) {
       const issues = checkPage(readFileSync(file, 'utf8'), {
         version, ...rules,
         designSystemCss: options.designSystemCss, designSystemJs: options.designSystemJs,
+        designSystemBundle: options.designSystemBundle,
         allowStylesheets: options.allowStylesheets, allowScripts: options.allowScripts,
         allowInlineScripts: options.allowInlineScripts,
       })

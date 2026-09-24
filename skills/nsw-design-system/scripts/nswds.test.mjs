@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url'
 import { deflateRawSync } from 'node:zlib'
 import {
   cachedVersions, checkPage, cssClasses, examplesOf, extractKit, guidanceOf, kitVersion,
-  approved, listKit, loadRules, parseApproval, readZip, resolveVersion, standaloneTemplate, styleKey, themeOnly,
+  approved, KIT_LIMITS, listKit, loadRules, parseApproval, readCapped, readZip, resolveVersion, standaloneTemplate,
+  styleKey, themeOnly,
 } from './nswds.mjs'
 
 const script = fileURLToPath(new URL('./nswds.mjs', import.meta.url))
@@ -150,6 +151,33 @@ test('rejects a kit that does not match the requested release', () => {
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('refuses oversized kit entries before decompressing them', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nswds-'))
+  try {
+    const files = kitFiles()
+    const big = ['components/card/index.html', 'x'.repeat(5000)]
+    assert.throws(() => extractKit(zip([...files.filter(([n]) => n !== big[0]), big]), '9.1.0', root, { entry: 4000, total: 1e6 }),
+      /Kit entry components\/card\/index\.html declares 5000 bytes; refusing entries over 4000/)
+    assert.throws(() => extractKit(zip(files), '9.1.0', root, { entry: 1e6, total: 1000 }), /Kit files total more than 1000 bytes/)
+    assert.deepEqual(cachedVersions(root), [], 'nothing is cached after a refusal')
+
+    // A tiny deflated entry that claims a huge size is refused on its claim, not after inflating.
+    const bomb = zip([...files, ['templates/content/bomb.html', Buffer.alloc(2 * 1024 * 1024)]])
+    assert.throws(() => extractKit(bomb, '9.1.0', root, { entry: 1024 * 1024, total: 1e9 }), /bomb\.html declares 2097152 bytes/)
+    assert.ok(extractKit(zip(files), '9.1.0', root), 'the default limits accept a normal kit')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('caps the starter kit download', async () => {
+  const response = (...chunks) => ({ body: (async function* () { yield* chunks.map((c) => new Uint8Array(Buffer.from(c))) })() })
+  assert.equal((await readCapped(response('abc', 'def'), 6, 'kit')).toString(), 'abcdef')
+  await assert.rejects(readCapped(response('abc', 'defg'), 6, 'The kit'), /The kit is larger than 6 bytes; refusing it/)
+  assert.ok(KIT_LIMITS.download >= 52122291 * 2 && KIT_LIMITS.entry >= 288223 * 10 && KIT_LIMITS.total >= 10510163 * 5,
+    'limits leave ample room above the v3.27.0 kit')
 })
 
 test('lists components, core styles, guides and templates', () => withKit((kit) => {

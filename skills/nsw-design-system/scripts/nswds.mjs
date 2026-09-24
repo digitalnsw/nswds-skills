@@ -16,6 +16,9 @@ const kitUrl = (version) => `https://raw.githubusercontent.com/${REPO}/v${versio
 const cdn = (version, file) => `https://cdn.jsdelivr.net/npm/nsw-design-system@${version}/dist/${file}`
 const KEEP = /^(index\.html|css\/main\.css|(components|core|templates)\/[a-z0-9][a-z0-9/._-]*\.html|docs\/content\/[a-z0-9-]+\/[a-z0-9-]+\.html)$/
 const VERSION = /^\d+\.\d+\.\d+$/
+// Far above the v3.27.0 kit (a 52 MB download; the 232 files kept total 10.5 MB, the
+// largest 288 KB) and low enough that a corrupt or tampered kit cannot exhaust memory.
+export const KIT_LIMITS = { download: 200 * 1024 * 1024, entry: 10 * 1024 * 1024, total: 100 * 1024 * 1024 }
 
 export const cacheRoot = () => process.env.NSWDS_CACHE_DIR
   || join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'nswds-skills', 'nsw-design-system')
@@ -77,17 +80,34 @@ export function kitVersion(indexHtml) {
   return indexHtml.match(/class="nsw-docs__version">\s*v?(\d+\.\d+\.\d+)\s*</)?.[1] ?? null
 }
 
+// Reads a response body in chunks, refusing it once it passes limit bytes.
+export async function readCapped(response, limit, label) {
+  const chunks = []
+  let size = 0
+  for await (const chunk of response.body) {
+    size += chunk.length
+    if (size > limit) throw new Error(`${label} is larger than ${limit} bytes; refusing it`)
+    chunks.push(Buffer.from(chunk))
+  }
+  return Buffer.concat(chunks, size)
+}
+
 // Extracts only the files the skill reads, then confirms the kit is the release asked for.
-export function extractKit(buffer, version, root = cacheRoot()) {
+// Declared sizes are checked before anything is decompressed.
+export function extractKit(buffer, version, root = cacheRoot(), limits = KIT_LIMITS) {
   version = normaliseVersion(version)
   const target = join(root, version)
   const staging = `${target}.partial-${process.pid}`
   rmSync(staging, { recursive: true, force: true })
   try {
+    let total = 0
     for (const entry of readZip(buffer)) {
       if (!KEEP.test(entry.name) || entry.name.split('/').includes('..')) continue
       const path = resolve(staging, entry.name)
       if (!path.startsWith(resolve(staging) + sep)) continue
+      if (entry.size > limits.entry) throw new Error(`Kit entry ${entry.name} declares ${entry.size} bytes; refusing entries over ${limits.entry}`)
+      total += entry.size
+      if (total > limits.total) throw new Error(`Kit files total more than ${limits.total} bytes; refusing it`)
       mkdirSync(dirname(path), { recursive: true })
       writeFileSync(path, entryData(buffer, entry))
     }
@@ -156,7 +176,7 @@ export async function ensureKit(version, root = cacheRoot()) {
   const target = join(root, version)
   if (existsSync(join(target, '.complete'))) return target
   console.error(`Downloading the NSW Design System v${version} starter kit (about 50 MB, once per version)…`)
-  const buffer = Buffer.from(await (await get(kitUrl(version))).arrayBuffer())
+  const buffer = await readCapped(await get(kitUrl(version)), KIT_LIMITS.download, `The v${version} starter kit`)
   return extractKit(buffer, version, root)
 }
 

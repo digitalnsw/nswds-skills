@@ -35,6 +35,10 @@ async function get(url) {
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN
   if (token && url.startsWith('https://api.github.com/')) headers.Authorization = `Bearer ${token}`
   const response = await fetch(url, { headers })
+  // fetch follows redirects to any address; refuse one that leaves HTTPS.
+  if (response.url && new URL(response.url).protocol !== 'https:') {
+    throw new Error(`${url} redirected to an insecure address: ${response.url}`)
+  }
   if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`)
   return response
 }

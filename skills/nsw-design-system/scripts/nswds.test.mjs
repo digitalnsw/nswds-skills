@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { deflateRawSync } from 'node:zlib'
 import {
   cachedVersions, checkPage, cssClasses, examplesOf, extractKit, guidanceOf, kitVersion,
-  approved, decodeReferences, KIT_LIMITS, listKit, loadRules, openTags, parseApproval, readCapped, readZip, resolveVersion, standaloneTemplate,
+  approved, decodeReferences, KIT_LIMITS, latestVersions, listKit, loadRules, openTags, parseApproval, readCapped, readZip, resolveVersion, standaloneTemplate,
   styleKey, themeOnly,
 } from './nswds.mjs'
 
@@ -617,6 +617,18 @@ test('escapes the template title', () => {
   const { html } = standaloneTemplate(hostile, '9.1.0')
   assert.match(html, /<title>A &lt;\/title&gt;&lt;script&gt;alert\(1\)&lt;\/script&gt;<\/title>/)
   assert.doesNotMatch(html, /<script>alert/)
+})
+
+test('refuses a download redirected away from HTTPS', async () => {
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url) => ({ ok: true, status: 200, url: 'http://mirror.example/nsw-design-system/latest', json: async () => ({}) })
+  try {
+    const latest = await latestVersions()
+    assert.equal(latest.release, null)
+    assert.ok(latest.errors.every((e) => /redirected to an insecure address: http:\/\/mirror\.example/.test(e)), latest.errors.join('\n'))
+  } finally {
+    globalThis.fetch = realFetch
+  }
 })
 
 test('the default version must be published on both GitHub and npm', async () => {

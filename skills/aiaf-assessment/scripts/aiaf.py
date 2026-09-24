@@ -442,17 +442,27 @@ def set_cell_inline(xml, ref, value):
 
 
 def force_recalc(xml):
-    """Make Excel recalculate every formula on open, whatever calcPr said before."""
-    calc = re.search(r"<calcPr\b[^>]*?/?>", xml)
-    if not calc:
-        # calcPr follows definedNames and precedes these in the workbook schema.
-        later = re.search(r"<(oleSize|customWorkbookViews|pivotCaches|smartTagPr|smartTagTypes|webPublishing"
-                          r"|fileRecoveryPr|webPublishObjects|extLst)\b", xml)
-        at = later.start() if later else xml.rindex("</workbook>")
-        return xml[:at] + '<calcPr fullCalcOnLoad="1"/>' + xml[at:]
-    tag = re.sub(r'\sfullCalcOnLoad\s*=\s*("[^"]*"|\'[^\']*\')', "", calc.group(0))
-    tag = re.sub(r"^<calcPr\b", '<calcPr fullCalcOnLoad="1"', tag)
-    return xml[:calc.start()] + tag + xml[calc.end():]
+    """Make Excel recalculate every formula on open, whatever calcPr said before. The root
+    may use a namespace prefix, which new and existing elements share."""
+    root = re.search(r"<(\w+:)?workbook\b", xml)
+    if not root:
+        raise WorkbookError("xl/workbook.xml has no workbook element; the workbook layout has changed")
+    prefix = root.group(1) or ""
+    calc = re.search(r"<%scalcPr\b[^>]*?/?>" % re.escape(prefix), xml)
+    if calc:
+        tag = re.sub(r'\sfullCalcOnLoad\s*=\s*("[^"]*"|\'[^\']*\')', "", calc.group(0))
+        tag = re.sub(r"^<%scalcPr\b" % re.escape(prefix), f'<{prefix}calcPr fullCalcOnLoad="1"', tag)
+        return xml[:calc.start()] + tag + xml[calc.end():]
+    # calcPr is a direct child of workbook: after sheets (and definedNames), before these.
+    # Search only after sheets, so an extLst nested in bookViews is not matched.
+    sheets = re.search(r"</%(p)ssheets>|<%(p)ssheets\b[^>]*/>" % {"p": re.escape(prefix)}, xml)
+    close = re.search(r"</%sworkbook>\s*$" % re.escape(prefix), xml)
+    if not sheets or not close:
+        raise WorkbookError("xl/workbook.xml has no sheets or closing workbook element; the workbook layout has changed")
+    later = re.compile(r"<%s(oleSize|customWorkbookViews|pivotCaches|smartTagPr|smartTagTypes|webPublishing"
+                       r"|fileRecoveryPr|webPublishObjects|extLst)\b" % re.escape(prefix)).search(xml, sheets.end(), close.start())
+    at = later.start() if later else close.start()
+    return xml[:at] + f'<{prefix}calcPr fullCalcOnLoad="1"/>' + xml[at:]
 
 
 def fill(template, answers_path, out_path):

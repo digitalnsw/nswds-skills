@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { deflateRawSync } from 'node:zlib'
 import {
   cachedVersions, checkPage, cssClasses, examplesOf, extractKit, guidanceOf, kitVersion,
-  approved, KIT_LIMITS, listKit, loadRules, parseApproval, readCapped, readZip, resolveVersion, standaloneTemplate,
+  approved, decodeReferences, KIT_LIMITS, listKit, loadRules, openTags, parseApproval, readCapped, readZip, resolveVersion, standaloneTemplate,
   styleKey, themeOnly,
 } from './nswds.mjs'
 
@@ -410,7 +410,7 @@ test('event handlers, javascript: addresses, preloads and <base> are checked', (
   const messages = checkPage(page, rules).map((i) => i.message).join('\n')
   for (const pattern of [/onclick attribute: inline script/, /javascript: address in href/,
     /stylesheet not from the design system release: https:\/\/evil\.example\/x\.css/,
-    /script not from the design system release: https:\/\/evil\.example\/x\.js/, /<base> element/]) {
+    /script not from the design system release: https:\/\/evil\.example\/x\.js/, /<base href> element/]) {
     assert.match(messages, pattern)
   }
   const approvedHandler = html.replace('<main', '<div class="nsw-card" onclick="track()"></div>\n<main')
@@ -428,6 +428,73 @@ test('initSite must run after the design system JavaScript has loaded', () => wi
     const deferred = html.replace(tag, tag.replace('<script', `<script${attr}`))
     assert.match(checkPage(deferred, rules).map((i) => i.message).join('\n'), /must load without defer, async or type="module"/, attr)
   }
+}))
+
+test('tokenizes like a browser: end tags, comment endings, quotes and references', () => withKit((kit) => {
+  const rules = { version: '9.1.0', ...loadRules(kit) }
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  const at = (markup) => html.replace('<main', `${markup}\n<main`)
+  const messages = (page, extra = {}) => checkPage(page, { ...rules, ...extra }).map((i) => i.message).join('\n')
+  assert.match(messages(at('</p title="<!--"><div style="color:red"></div></p title="-->">')), /style attribute "color:red"/,
+    'a comment marker inside an end tag is not a comment')
+  assert.match(messages(at('<!-- a --!><script src="https://evil.example/x.js"></script><!-- b -->')),
+    /script not from the design system release: https:\/\/evil\.example\/x\.js/, '"--!>" ends a comment')
+  assert.match(messages(at('<a class="nsw-card" href="&#106;avascript:alert(1)">x</a>')), /javascript: address in href/)
+  assert.match(messages(at('<a class="nsw-card" href="javascript&colon;alert(1)">x</a>')), /javascript: address in href/)
+  assert.match(messages(at('<script src="/build/&#46;&#46;/&#46;&#46;/evil.js"></script>'), { allowScripts: ['/build/'] }),
+    /script not from the design system release: \/build\/\.\.\/\.\.\/evil\.js/, 'references are decoded before approval')
+  assert.match(messages(at("<p class=nsw-card'x>don't</p>")), /class "nsw-card'x" is not defined/, 'a quote only starts a value after "="')
+  assert.match(messages(at('<p class="&#101;vil">x</p>')), /class "evil" is not defined/)
+  assert.match(messages(at('<?php <div style="color:red"> ?><div class="evil"></div>')), /class "evil"/, '"<?" is a bogus comment ending at ">"')
+  assert.equal(decodeReferences('a&amp;b&#x2F;&sol;&period;&eacute;&amp'), 'a&b//.&eacute;&')
+  const tags = openTags('<div a="x>y" b=c\'d>t</div><script>"</p><x>"</script><b>')
+  assert.deepEqual(tags.map((t) => t.name), ['div', 'script', 'b'])
+  assert.equal(tags[0].attrs.get('b'), "c'd")
+  assert.equal(tags[1].content, '"</p><x>"')
+}))
+
+test('SVG scripts, srcdoc, object and embed are checked', () => withKit((kit) => {
+  const rules = { version: '9.1.0', ...loadRules(kit) }
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  const page = html.replace('<main', `<svg><script href="https://evil.example/x.js"></script></svg>
+<iframe srcdoc="<script>parent.document.body.style.background='red'</script>"></iframe>
+<object data="https://evil.example/x.html"></object><embed src="https://evil.example/x.swf">
+<main`)
+  const messages = checkPage(page, rules).map((i) => i.message).join('\n')
+  for (const pattern of [/script not from the design system release: https:\/\/evil\.example\/x\.js/, /iframe srcdoc/,
+    /<object> loads content that is not from the design system release: https:\/\/evil\.example\/x\.html/,
+    /<embed> loads content that is not from the design system release: https:\/\/evil\.example\/x\.swf/]) {
+    assert.match(messages, pattern)
+  }
+  const allowed = html.replace('<main', '<object data="https://maps.example.org/m.html"></object>\n<main')
+  assert.deepEqual(checkPage(allowed, { ...rules, allowScripts: ['https://maps.example.org/'] }), [])
+}))
+
+test('framework bundles and script types', () => withKit((kit) => {
+  const rules = { version: '9.1.0', ...loadRules(kit) }
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  const pair = /<script src="[^"]+main\.js"><\/script>\n<script>window\.NSW\.initSite\(\)<\/script>/
+  const bundled = html.replace(pair, '<script type="module" src="/assets/index-abc123.js"></script>')
+  assert.deepEqual(checkPage(bundled, { ...rules, designSystemJs: ['/assets/'] }), [], 'a bundle may be a module that calls initSite itself')
+  const earlyForBundle = html.replace(pair, '<script type="module" src="/assets/index.js"></script>\n<script>window.NSW.initSite()</script>')
+  assert.match(checkPage(earlyForBundle, { ...rules, designSystemJs: ['/assets/'] }).map((i) => i.message).join('\n'),
+    /initSite\(\) runs before the design system JavaScript is loaded/, 'an inline initSite cannot follow a deferred bundle')
+  const plain = html.replace(/<script src="([^"]+main\.js)">/, '<script type="text/plain" src="$1">')
+  assert.match(checkPage(plain, rules).map((i) => i.message).join('\n'), /type="text\/plain", so the browser never runs it/)
+  const typed = html.replace(/<script src="([^"]+main\.js)">/, '<script type="text/javascript" src="$1">')
+  assert.deepEqual(checkPage(typed, rules), [])
+  const target = html.replace('<head>', '<head>\n<base target="_blank">')
+  assert.deepEqual(checkPage(target, rules), [], '<base target> without href is fine')
+}))
+
+test('rules are cached beside the kit', () => withKit((kit) => {
+  const first = loadRules(kit)
+  assert.ok(existsSync(join(kit, '.rules-2.json')))
+  writeFileSync(join(kit, 'css', 'main.css'), '.changed-after-cache{}')
+  const second = loadRules(kit)
+  assert.deepEqual([...second.classes].sort(), [...first.classes].sort(), 'the cached rules are used')
+  writeFileSync(join(kit, '.rules-2.json'), 'not json')
+  assert.ok(loadRules(kit).classes.has('changed-after-cache'), 'an unreadable cache is rebuilt')
 }))
 
 test('reports correct line numbers', () => withKit((kit) => {

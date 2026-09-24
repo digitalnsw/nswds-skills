@@ -214,7 +214,18 @@ class AiafTest(unittest.TestCase):
                          '<workbook><calcPr fullCalcOnLoad="1" calcId="1"/></workbook>')
         self.assertEqual(aiaf.force_recalc("<workbook><calcPr fullCalcOnLoad='false' calcId=\"1\"></calcPr></workbook>"),
                          '<workbook><calcPr fullCalcOnLoad="1" calcId="1"></calcPr></workbook>')
-        self.assertEqual(aiaf.force_recalc("<workbook></workbook>"), '<workbook><calcPr fullCalcOnLoad="1"/></workbook>')
+        self.assertEqual(aiaf.force_recalc("<workbook><sheets/></workbook>"), '<workbook><sheets/><calcPr fullCalcOnLoad="1"/></workbook>')
+        nested = "<workbook><bookViews><workbookView><extLst/></workbookView></bookViews><sheets/><definedNames/></workbook>"
+        self.assertEqual(aiaf.force_recalc(nested),
+                         '<workbook><bookViews><workbookView><extLst/></workbookView></bookViews><sheets/><definedNames/>'
+                         '<calcPr fullCalcOnLoad="1"/></workbook>', "an extLst inside bookViews is not a workbook child")
+        self.assertEqual(aiaf.force_recalc('<x:workbook><x:sheets></x:sheets></x:workbook>'),
+                         '<x:workbook><x:sheets></x:sheets><x:calcPr fullCalcOnLoad="1"/></x:workbook>')
+        self.assertEqual(aiaf.force_recalc('<x:workbook><x:sheets/><x:calcPr calcId="1" fullCalcOnLoad="0"/></x:workbook>'),
+                         '<x:workbook><x:sheets/><x:calcPr fullCalcOnLoad="1" calcId="1"/></x:workbook>')
+        for broken in ("<workbook></workbook>", "<x:workbook><x:sheets/>", "<other/>"):
+            with self.assertRaisesRegex(aiaf.WorkbookError, "workbook layout has changed"):
+                aiaf.force_recalc(broken)
         self.assertEqual(aiaf.force_recalc("<workbook><sheets/><definedNames/><pivotCaches/><extLst/></workbook>"),
                          '<workbook><sheets/><definedNames/><calcPr fullCalcOnLoad="1"/><pivotCaches/><extLst/></workbook>')
 

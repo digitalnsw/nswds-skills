@@ -1,3 +1,9 @@
+## [2.1.0](https://github.com/digitalnsw/nswds-skills/compare/v2.0.0...v2.1.0) (2026-09-24)
+
+### Features
+
+* add NSW Design System and AIAF assessment skills ([#21](https://github.com/digitalnsw/nswds-skills/issues/21)) ([4ba949b](https://github.com/digitalnsw/nswds-skills/commit/4ba949b7b43f47edfe6bcb90b4f797aa8bf2c306))
+
 ## [2.0.0](https://github.com/digitalnsw/nswds-skills/compare/v1.1.0...v2.0.0) (2026-09-17)
 
 ### ⚠ BREAKING CHANGES

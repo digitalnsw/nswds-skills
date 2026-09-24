@@ -323,6 +323,30 @@ test('approvals match the exact address, never a lookalike', () => {
   assert.ok(!approved('https://cdn.example.com/lib/app.js/extra', approvals), 'a file approval is not a prefix')
 })
 
+test('relative approvals resolve dot segments before comparing', () => {
+  const approvals = ['/build/', './js/', '/build/site.css'].map(parseApproval)
+  for (const url of ['/build/app.js', '/build/sub/../site.css', './js/app.js', 'js/app.js']) assert.ok(approved(url, approvals), url)
+  for (const url of ['/build/../evil.js', './js/../evil.js', '/build/%2e%2e/evil.js', '/build/%2E%2E/evil.js',
+    '/build/./../evil.js', '../js/app.js']) {
+    assert.ok(!approved(url, approvals), url)
+  }
+  assert.ok(!approved('https://relative.invalid/page/js/app.js', approvals), 'the resolution base is not a real origin')
+})
+
+test('reads tags quote-aware so a ">" in a value cannot hide an attribute', () => withKit((kit) => {
+  const rules = { version: '9.1.0', ...loadRules(kit) }
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  const hidden = html.replace('<main class="nsw-container">',
+    `<div data-note=">" style="color:red">x</div>\n<div data-a='>' class="nsw-card hidden-custom">y</div>\n<main class="nsw-container">`)
+  const messages = checkPage(hidden, rules).map((i) => i.message)
+  assert.ok(messages.some((m) => /style attribute "color:red"/.test(m)), messages.join('\n'))
+  assert.ok(messages.some((m) => /class "hidden-custom" is not defined/.test(m)), messages.join('\n'))
+  const link = html.replace('</head>', `<link title=">" rel="stylesheet" href="https://x.example.org/a.css">\n</head>`)
+  assert.ok(checkPage(link, rules).some((i) => /stylesheet not from the design system release: https:\/\/x\.example\.org/.test(i.message)))
+  const text = html.replace('<h1>Article</h1>', '<h1>Use class=custom in a sentence</h1>')
+  assert.deepEqual(checkPage(text, rules), [], 'attribute-like text outside a tag is not an attribute')
+}))
+
 test('only the Google Fonts links the release uses are accepted', () => withKit((kit) => {
   const rules = { version: '9.1.0', ...loadRules(kit) }
   assert.ok(rules.fonts.has('https://fonts.googleapis.com/css2?family=Public+Sans&display=swap'))

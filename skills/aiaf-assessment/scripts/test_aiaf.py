@@ -423,46 +423,67 @@ class FakeProcess:
 
 
 class CurlFallbackTest(unittest.TestCase):
-    """The curl fallback streams with a size limit and accepts only a trusted final URL."""
+    """The curl fallback follows redirects one at a time, checking each address first."""
+
+    TRUSTED = "https://www.digital.nsw.gov.au/a.xlsx"
 
     def setUp(self):
         self.real_popen, self.real_which = aiaf.subprocess.Popen, aiaf.shutil.which
         aiaf.shutil.which = lambda name: "/usr/bin/curl"
+        self.requests = []
 
     def tearDown(self):
         aiaf.subprocess.Popen, aiaf.shutil.which = self.real_popen, self.real_which
 
-    def respond(self, stdout, returncode=0, stderr=b""):
-        self.process = FakeProcess(stdout, returncode, stderr)
+    def respond(self, *responses):
+        processes = [FakeProcess(*r) if isinstance(r, tuple) else FakeProcess(r) for r in responses]
+        self.processes = list(processes)
 
         def popen(args, **kwargs):
-            self.args = args
-            return self.process
+            self.requests.append(args)
+            return processes.pop(0)
         aiaf.subprocess.Popen = popen
 
-    def test_returns_the_body_when_the_final_url_is_trusted(self):
-        self.respond(b"line one\nline two\n\nhttps://www.digital.nsw.gov.au/a.xlsx")
-        self.assertEqual(aiaf.curl_fetch("https://www.digital.nsw.gov.au/a.xlsx", 5, "test", 1000), b"line one\nline two\n")
-        self.assertIn("--max-filesize", self.args)
+    def test_returns_the_body_of_a_direct_response(self):
+        self.respond(b"line one\nline two\n\n200 ")
+        self.assertEqual(aiaf.curl_fetch(self.TRUSTED, 5, "test", 1000), b"line one\nline two\n")
+        self.assertIn("--max-filesize", self.requests[0])
+        self.assertNotIn("--location", self.requests[0], "curl must not follow redirects itself")
 
-    def test_rejects_a_redirect_to_another_host(self):
-        self.respond(b"tampered\nhttps://attacker.example.org/a.xlsx")
-        with self.assertRaisesRegex(aiaf.WorkbookError, "not a nsw.gov.au site"):
-            aiaf.curl_fetch("https://www.digital.nsw.gov.au/a.xlsx", 5, "test", 1000)
+    def test_follows_a_trusted_redirect(self):
+        self.respond(b"\n301 https://www.digital.nsw.gov.au/b.xlsx", b"workbook\n200 ")
+        self.assertEqual(aiaf.curl_fetch(self.TRUSTED, 5, "test", 1000), b"workbook")
+        self.assertEqual(self.requests[1][-1], "https://www.digital.nsw.gov.au/b.xlsx")
+
+    def test_never_requests_an_untrusted_hop(self):
+        for location in (b"https://attacker.example.org/x.xlsx", b"http://www.digital.nsw.gov.au/x.xlsx"):
+            self.requests.clear()
+            self.respond(b"\n302 " + location, b"workbook\n200 ")
+            with self.assertRaisesRegex(aiaf.WorkbookError, "not a nsw.gov.au site|insecure"):
+                aiaf.curl_fetch(self.TRUSTED, 5, "test", 1000)
+            self.assertEqual(len(self.requests), 1, "the untrusted address is refused before it is requested")
+
+    def test_limits_redirects(self):
+        self.respond(*[b"\n302 " + self.TRUSTED.encode()] * (aiaf.MAX_REDIRECTS + 1))
+        with self.assertRaisesRegex(aiaf.WorkbookError, "more than 5 redirects"):
+            aiaf.curl_fetch(self.TRUSTED, 5, "test", 1000)
 
     def test_stops_reading_an_oversized_response(self):
-        self.respond(b"x" * 20000 + b"\nhttps://www.digital.nsw.gov.au/a.xlsx")
+        self.respond(b"x" * 20000 + b"\n200 ")
         with self.assertRaisesRegex(aiaf.WorkbookError, "larger than 100 bytes"):
-            aiaf.curl_fetch("https://www.digital.nsw.gov.au/a.xlsx", 5, "test", 100)
-        self.assertTrue(self.process.killed)
-        self.respond(b"x" * 150 + b"\nhttps://www.digital.nsw.gov.au/a.xlsx")
+            aiaf.curl_fetch(self.TRUSTED, 5, "test", 100)
+        self.assertTrue(self.processes[0].killed)
+        self.respond(b"x" * 150 + b"\n200 ")
         with self.assertRaisesRegex(aiaf.WorkbookError, "larger than 100 bytes"):
-            aiaf.curl_fetch("https://www.digital.nsw.gov.au/a.xlsx", 5, "test", 100)
+            aiaf.curl_fetch(self.TRUSTED, 5, "test", 100)
 
     def test_reports_curl_failures(self):
-        self.respond(b"", returncode=63, stderr=b"curl: (63) Maximum file size exceeded")
+        self.respond((b"", 63, b"curl: (63) Maximum file size exceeded"))
         with self.assertRaisesRegex(aiaf.WorkbookError, "Maximum file size exceeded"):
-            aiaf.curl_fetch("https://www.digital.nsw.gov.au/a.xlsx", 5, "test", 100)
+            aiaf.curl_fetch(self.TRUSTED, 5, "test", 100)
+        self.respond(b"no status line")
+        with self.assertRaisesRegex(aiaf.WorkbookError, "could not read the response status"):
+            aiaf.curl_fetch(self.TRUSTED, 5, "test", 100)
 
 
 class ReadLimitedTest(unittest.TestCase):

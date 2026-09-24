@@ -71,6 +71,7 @@ MAX_CENTRAL_DIRECTORY = 1024 * 1024
 # Downloads are read in chunks and refused past these sizes (the workbook is about 2.4 MB).
 MAX_PAGE_BYTES = 5 * 1024 * 1024
 MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
+MAX_REDIRECTS = 5
 
 
 class WorkbookError(Exception):
@@ -514,15 +515,28 @@ def curl_fetch(url, timeout, reason, limit):
     if not curl:
         raise WorkbookError(f"Python cannot verify HTTPS certificates ({reason}). Install its certificates "
                             f"or download the workbook yourself from {PAGE_URL}")
-    # curl cannot check each redirect's host, so it reports the final URL after the body and
-    # only that response is used; it must pass the same check as every other URL.
-    command = [curl, "--fail", "--silent", "--show-error", "--location", "--max-redirs", "5",
-               "--proto", "=https", "--proto-redir", "=https", "--max-time", str(timeout),
+    # Redirects are followed one at a time so every address is checked before it is
+    # requested, as the urllib path does.
+    for _ in range(MAX_REDIRECTS + 1):
+        require_trusted(url)
+        body, status, location = curl_once(curl, url, timeout, limit)
+        if not (300 <= status < 400):
+            return body
+        if not location:
+            raise WorkbookError(f"{url} redirected without a location")
+        url = urllib.parse.urljoin(url, location)
+    raise WorkbookError(f"more than {MAX_REDIRECTS} redirects fetching {url}")
+
+
+def curl_once(curl, url, timeout, limit):
+    """One request without following redirects. curl writes the status and any redirect
+    target after the body."""
+    command = [curl, "--fail", "--silent", "--show-error", "--proto", "=https", "--max-time", str(timeout),
                "--max-filesize", str(limit), "--user-agent", "nswds-skills",
-               "--write-out", "\n%{url_effective}", url]
+               "--write-out", "\n%{http_code} %{redirect_url}", url]
     with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
         try:
-            # The final URL line follows the body, so allow room for it here and check the
+            # The status line follows the body, so allow room for it here and check the
             # body itself against the limit below.
             output = read_limited(process.stdout, limit + 8 * 1024, url)
         except WorkbookError:
@@ -531,11 +545,13 @@ def curl_fetch(url, timeout, reason, limit):
         errors = process.stderr.read()
         if process.wait():
             raise WorkbookError(f"could not download {url}: {errors.decode(errors='replace').strip()}")
-    body, _, final = output.rpartition(b"\n")
+    body, _, trailer = output.rpartition(b"\n")
+    status, _, location = trailer.decode("utf-8", "replace").strip().partition(" ")
+    if not status.isdigit():
+        raise WorkbookError(f"could not read the response status for {url}")
     if len(body) > limit:
         raise WorkbookError(f"{url} is larger than {limit} bytes; refusing it")
-    require_trusted(final.decode("utf-8", "replace"))
-    return body
+    return body, int(status), location.strip()
 
 
 def download(directory):

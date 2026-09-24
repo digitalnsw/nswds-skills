@@ -319,14 +319,27 @@ export function cssClasses(css) {
   return new Set([...stripped.matchAll(/\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g)].map((m) => m[1]))
 }
 
-// Attribute names are case-insensitive and values may be double-quoted, single-quoted or unquoted.
-const VALUE = String.raw`\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>\x60]+))`
-const classAttr = new RegExp(String.raw`\sclass${VALUE}`, 'gi')
-const styleAttr = new RegExp(String.raw`<[a-z][^>]*?\sstyle${VALUE}`, 'gi')
-const valueOf = (m) => m[1] ?? m[2] ?? m[3] ?? ''
-const attr = (tag, name) => {
-  const m = tag.match(new RegExp(String.raw`\s${name}${VALUE}`, 'i'))
-  return m ? valueOf(m) : undefined
+// Opening tags, read so that a ">" inside a quoted attribute value does not end the tag.
+// Attribute names are case-insensitive and values may be double-quoted, single-quoted or
+// unquoted; the first occurrence of a repeated attribute wins, as in a browser.
+const OPEN_TAG = /<([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g
+const ATTRIBUTE = /([^\s"'=<>/\x60]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>\x60]+)))?/g
+export function openTags(html) {
+  return [...html.matchAll(OPEN_TAG)].map((m) => {
+    const attrs = new Map()
+    for (const a of m[2].matchAll(ATTRIBUTE)) {
+      const name = a[1].toLowerCase()
+      if (!attrs.has(name)) attrs.set(name, a[2] ?? a[3] ?? a[4] ?? '')
+    }
+    return { name: m[1].toLowerCase(), attrs, index: m.index, end: m.index + m[0].length }
+  })
+}
+const classesOf = (tag) => (tag.attrs.get('class') ?? '').split(/\s+/).filter(Boolean)
+// The text of a raw-text element (script, style) that starts after an opening tag.
+const contentAfter = (html, tag) => {
+  const rest = html.slice(tag.end)
+  const close = rest.search(new RegExp(`</${tag.name}\\s*>`, 'i'))
+  return close < 0 ? rest : rest.slice(0, close)
 }
 // Blank out comments, keeping line breaks so reported line numbers stay right.
 const withoutComments = (html) => html.replace(/<!--[\s\S]*?(?:-->|$)/g, (c) => c.replace(/[^\n]/g, ' '))
@@ -341,7 +354,6 @@ export function themeOnly(css) {
   return blocks.every((b) => b[1].split(';').map((d) => d.trim()).filter(Boolean).every((d) => /^--nsw-[a-z0-9-]+\s*:/.test(d)))
 }
 
-const FONTS = /\bhref\s*=\s*["']?(https:\/\/fonts\.googleapis\.com\/[^"'\s>]+)/gi
 const unescapeAmp = (url) => url.replace(/&amp;/g, '&')
 
 // An approval names an exact https:// file, everything under an https:// path ending in
@@ -359,17 +371,28 @@ export function parseApproval(pattern) {
     return { origin: url.origin, path: url.pathname, prefix: written.endsWith('/') }
   }
   if (/^\.{0,2}\//.test(value) && !value.startsWith('//')) {
-    const path = value.split(/[?#]/)[0]
-    return { origin: null, path, prefix: path.endsWith('/') }
+    const written = value.split(/[?#]/)[0]
+    return { origin: null, path: relativePath(written), prefix: written.endsWith('/') }
   }
   throw new Error(`approval "${value}" must be an https:// address or a path starting with / or ./`)
 }
 
+// Resolves "." and ".." segments (including percent-encoded ones) the way a browser
+// does, so "/build/../evil.js" is compared as "/evil.js".
+const RELATIVE_BASE = 'https://relative.invalid/page/'
+const relativePath = (path) => new URL(path, RELATIVE_BASE).pathname
+
 export function approved(url, approvals) {
   const absolute = /^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith('//')
   let origin = null
-  let path = url.split(/[?#]/)[0]
-  if (absolute) {
+  let path
+  if (!absolute) {
+    try {
+      path = relativePath(url.split(/[?#]/)[0])
+    } catch {
+      return false
+    }
+  } else {
     try {
       const parsed = new URL(url.startsWith('//') ? `https:${url}` : url)
       if (parsed.protocol !== 'https:') return false
@@ -393,12 +416,12 @@ export function loadRules(kit) {
       const path = join(dir, d.name)
       if (d.isDirectory()) walk(path, collectStyles)
       else if (d.name.endsWith('.html')) {
-        const html = withoutComments(readFileSync(path, 'utf8'))
-        for (const m of html.matchAll(FONTS)) fonts.add(unescapeAmp(m[1]))
-        for (const m of html.matchAll(classAttr)) {
-          for (const name of valueOf(m).split(/\s+/)) if (name && !name.startsWith('nsw-docs') && !name.startsWith('hljs')) classes.add(name)
+        for (const tag of openTags(withoutComments(readFileSync(path, 'utf8')))) {
+          const href = tag.attrs.get('href')
+          if (tag.name === 'link' && href?.startsWith('https://fonts.googleapis.com/')) fonts.add(unescapeAmp(href))
+          for (const name of classesOf(tag)) if (!name.startsWith('nsw-docs') && !name.startsWith('hljs')) classes.add(name)
+          if (collectStyles && tag.attrs.has('style')) styles.add(styleKey(tag.attrs.get('style')))
         }
-        if (collectStyles) for (const m of html.matchAll(styleAttr)) styles.add(styleKey(valueOf(m)))
       }
     }
   }
@@ -433,52 +456,52 @@ export function checkPage(source, {
   const pinned = (index, asset) => {
     if (asset.version !== version) add('error', index, `design system asset pinned to @${asset.version}; use the exact release @${version}`)
   }
-  for (const m of html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi)) {
-    if (!themeOnly(m[1])) add('error', m.index, '<style> element: custom CSS is not allowed; only --nsw-* theming variables may be set')
+  const tags = openTags(html)
+  for (const tag of tags.filter((t) => t.name === 'style')) {
+    if (!themeOnly(contentAfter(html, tag))) add('error', tag.index, '<style> element: custom CSS is not allowed; only --nsw-* theming variables may be set')
   }
-  for (const m of html.matchAll(styleAttr)) {
-    const value = valueOf(m)
-    if (!styles.has(styleKey(value)) && !themeOnly(`x{${value}}`)) add('error', m.index, `style attribute "${value}" is not used by the design system; use design system classes`)
+  for (const tag of tags.filter((t) => t.attrs.has('style'))) {
+    const value = tag.attrs.get('style')
+    if (!styles.has(styleKey(value)) && !themeOnly(`x{${value}}`)) add('error', tag.index, `style attribute "${value}" is not used by the design system; use design system classes`)
   }
   let stylesheet = false
-  for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
-    if (!(attr(m[0], 'rel') ?? '').toLowerCase().split(/\s+/).includes('stylesheet')) continue
-    const href = unescapeAmp(attr(m[0], 'href') ?? '')
+  for (const tag of tags.filter((t) => t.name === 'link')) {
+    if (!(tag.attrs.get('rel') ?? '').toLowerCase().split(/\s+/).includes('stylesheet')) continue
+    const href = unescapeAmp(tag.attrs.get('href') ?? '')
     const asset = dsAsset(href, 'css')
-    if (asset && ['main.css', 'core.css'].includes(asset.file)) { stylesheet = true; pinned(m.index, asset) }
+    if (asset && ['main.css', 'core.css'].includes(asset.file)) { stylesheet = true; pinned(tag.index, asset) }
     else if (href && approved(href, dsCss)) stylesheet = true
     else if (fonts.has(href)) continue
     else if (href && approved(href, otherCss)) continue
-    else add('error', m.index, `stylesheet not from the design system release: ${href || '(no href)'}`)
+    else add('error', tag.index, `stylesheet not from the design system release: ${href || '(no href)'}`)
   }
   if (!stylesheet) add('error', 0, `no design system stylesheet; link ${cdn(version, 'css/main.css')} or pass --design-system-css for your compiled design system bundle`)
   let script = false
   let init = false
-  for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
-    const src = attr(m[1], 'src')
+  for (const tag of tags.filter((t) => t.name === 'script')) {
+    const src = tag.attrs.get('src')
+    const content = contentAfter(html, tag)
     if (src !== undefined) {
       const asset = dsAsset(src, 'js')
-      if (asset && ['main.js', 'main.min.js'].includes(asset.file)) { script = true; pinned(m.index, asset) }
+      if (asset && ['main.js', 'main.min.js'].includes(asset.file)) { script = true; pinned(tag.index, asset) }
       else if (src && approved(src, dsJs)) script = true
       else if (src && approved(src, otherJs)) continue
-      else add('error', m.index, `script not from the design system release: ${src || '(empty src)'}`)
-    } else if (/^\s*window\.NSW\.initSite\(\);?\s*$/.test(m[2])) {
+      else add('error', tag.index, `script not from the design system release: ${src || '(empty src)'}`)
+    } else if (/^\s*window\.NSW\.initSite\(\);?\s*$/.test(content)) {
       init = true
-    } else if (m[2].trim() && !inlineApproved(m[2])) {
-      add('error', m.index, 'inline script not from the design system release; use a design system component, or pass --allow-inline-script if the user approved it')
+    } else if (content.trim() && !inlineApproved(content)) {
+      add('error', tag.index, 'inline script not from the design system release; use a design system component, or pass --allow-inline-script if the user approved it')
     }
   }
-  const classMatches = [...html.matchAll(classAttr)]
-  const hooks = classMatches.some((m) => valueOf(m).split(/\s+/).some((name) => name.startsWith('js-')))
+  const hooks = tags.some((t) => classesOf(t).some((name) => name.startsWith('js-')))
   if (script && !init) add('error', 0, 'design system JavaScript is loaded but window.NSW.initSite() is never called')
   if (!script && init) add('error', 0, 'window.NSW.initSite() is called but the design system JavaScript is not loaded')
   if (!script && hooks) add('error', 0, 'page uses js- hooks but does not load the design system JavaScript')
   const seen = new Map()
-  for (const m of classMatches) {
-    for (const name of valueOf(m).split(/\s+/)) {
-      if (!name) continue
-      if (name.startsWith('nsw-docs')) add('error', m.index, `${name} is a docs-site class, not part of the design system`)
-      else if (!classes.has(name) && !seen.has(name)) seen.set(name, m.index)
+  for (const tag of tags) {
+    for (const name of classesOf(tag)) {
+      if (name.startsWith('nsw-docs')) add('error', tag.index, `${name} is a docs-site class, not part of the design system`)
+      else if (!classes.has(name) && !seen.has(name)) seen.set(name, tag.index)
     }
   }
   for (const [name, index] of seen) add('error', index, `class "${name}" is not defined by NSW Design System v${version}`)

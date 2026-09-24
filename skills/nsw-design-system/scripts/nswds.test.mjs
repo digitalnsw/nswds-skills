@@ -287,6 +287,12 @@ test('approvals match the exact address, never a lookalike', () => {
   for (const bad of ['analytics.example.com', 'http://analytics.example.com/', '//analytics.example.com/', 'js/app.js']) {
     assert.throws(() => parseApproval(bad), /must be an https:\/\/ address or a path starting with \/ or \.\//, bad)
   }
+  for (const bare of ['https://analytics.example.com', 'https://analytics.example.com?v=1', 'https://analytics.example.com#x']) {
+    assert.throws(() => parseApproval(bare), /names a whole site; add a trailing \//, bare)
+  }
+  const site = [parseApproval('https://analytics.example.com/')]
+  assert.ok(approved('https://analytics.example.com/any/file.js', site), 'an explicit trailing / approves the whole site')
+  assert.ok(!approved('https://cdn.example.com/lib/app.js/extra', approvals), 'a file approval is not a prefix')
 })
 
 test('only the Google Fonts links the release uses are accepted', () => withKit((kit) => {

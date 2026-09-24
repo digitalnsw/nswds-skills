@@ -68,6 +68,9 @@ MAX_RATIO = 200
 # zipfile reads the whole central directory when a file is opened, one record of at least
 # 46 bytes per part, so its size is checked first. The official workbook's is under 10 KB.
 MAX_CENTRAL_DIRECTORY = 1024 * 1024
+# Downloads are read in chunks and refused past these sizes (the workbook is about 2.4 MB).
+MAX_PAGE_BYTES = 5 * 1024 * 1024
+MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 
 
 class WorkbookError(Exception):
@@ -478,35 +481,59 @@ class TrustedRedirects(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def fetch(url, timeout):
-    """GET a URL. Falls back to the system curl (which still verifies certificates) when
-    this Python has no CA bundle, as with a python.org install on macOS."""
+def read_limited(stream, limit, url):
+    chunks, size = [], 0
+    while True:
+        chunk = stream.read(64 * 1024)
+        if not chunk:
+            return b"".join(chunks)
+        size += len(chunk)
+        if size > limit:
+            raise WorkbookError(f"{url} is larger than {limit} bytes; refusing it")
+        chunks.append(chunk)
+
+
+def fetch(url, timeout, limit):
+    """GET a URL, reading at most limit bytes. Falls back to the system curl (which still
+    verifies certificates) when this Python has no CA bundle, as with a python.org install
+    on macOS."""
     require_trusted(url)
     request = urllib.request.Request(url, headers={"User-Agent": "nswds-skills"})
     try:
         with urllib.request.build_opener(TrustedRedirects).open(request, timeout=timeout) as response:
             require_trusted(response.geturl())
-            return response.read()
+            return read_limited(response, limit, url)
     except urllib.error.URLError as e:
         if not isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
             raise
-        return curl_fetch(url, timeout, e.reason)
+        return curl_fetch(url, timeout, e.reason, limit)
 
 
-def curl_fetch(url, timeout, reason):
+def curl_fetch(url, timeout, reason, limit):
     curl = shutil.which("curl")
     if not curl:
         raise WorkbookError(f"Python cannot verify HTTPS certificates ({reason}). Install its certificates "
                             f"or download the workbook yourself from {PAGE_URL}")
     # curl cannot check each redirect's host, so it reports the final URL after the body and
     # only that response is used; it must pass the same check as every other URL.
-    result = subprocess.run([curl, "--fail", "--silent", "--show-error", "--location", "--max-redirs", "5",
-                             "--proto", "=https", "--proto-redir", "=https", "--max-time", str(timeout),
-                             "--user-agent", "nswds-skills", "--write-out", "\n%{url_effective}", url],
-                            capture_output=True, check=False)
-    if result.returncode:
-        raise WorkbookError(f"could not download {url}: {result.stderr.decode(errors='replace').strip()}")
-    body, _, final = result.stdout.rpartition(b"\n")
+    command = [curl, "--fail", "--silent", "--show-error", "--location", "--max-redirs", "5",
+               "--proto", "=https", "--proto-redir", "=https", "--max-time", str(timeout),
+               "--max-filesize", str(limit), "--user-agent", "nswds-skills",
+               "--write-out", "\n%{url_effective}", url]
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+        try:
+            # The final URL line follows the body, so allow room for it here and check the
+            # body itself against the limit below.
+            output = read_limited(process.stdout, limit + 8 * 1024, url)
+        except WorkbookError:
+            process.kill()
+            raise WorkbookError(f"{url} is larger than {limit} bytes; refusing it") from None
+        errors = process.stderr.read()
+        if process.wait():
+            raise WorkbookError(f"could not download {url}: {errors.decode(errors='replace').strip()}")
+    body, _, final = output.rpartition(b"\n")
+    if len(body) > limit:
+        raise WorkbookError(f"{url} is larger than {limit} bytes; refusing it")
     require_trusted(final.decode("utf-8", "replace"))
     return body
 
@@ -514,7 +541,7 @@ def curl_fetch(url, timeout, reason):
 def download(directory):
     """Fetch the current workbook, check it, and save it under its published name.
     Always downloads, so a workbook updated under the same name is picked up."""
-    page = fetch(PAGE_URL, 60).decode("utf-8", "replace")
+    page = fetch(PAGE_URL, 60, MAX_PAGE_BYTES).decode("utf-8", "replace")
     links = re.findall(r'href="([^"]+\.xlsx)"', page, re.I)
     links = [l for l in links if "aiaf" in l.lower()] or links
     if not links:
@@ -529,7 +556,7 @@ def download(directory):
     path = os.path.join(directory, name)
     if os.path.islink(path) or (os.path.exists(path) and not os.path.isfile(path)):
         raise WorkbookError(f"{path} exists and is not a regular file; refusing to replace it")
-    body = fetch(url, 120)
+    body = fetch(url, 120, MAX_DOWNLOAD_BYTES)
     unchanged = False
     if os.path.isfile(path):
         with open(path, "rb") as f:

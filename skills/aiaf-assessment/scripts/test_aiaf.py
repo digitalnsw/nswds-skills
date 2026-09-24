@@ -346,7 +346,12 @@ class DownloadTest(unittest.TestCase):
             self.body = f.read()
         self.page = b'<a href="/sites/default/files/aiaf-tool.xlsx">Excel</a>'
         self.real_fetch = aiaf.fetch
-        aiaf.fetch = lambda url, timeout: self.page if url == aiaf.PAGE_URL else self.body
+        self.limits = []
+
+        def fake_fetch(url, timeout, limit):
+            self.limits.append(limit)
+            return self.page if url == aiaf.PAGE_URL else self.body
+        aiaf.fetch = fake_fetch
         self.out = os.path.join(self.dir.name, "out")
 
     def tearDown(self):
@@ -364,6 +369,7 @@ class DownloadTest(unittest.TestCase):
         with open(path, "rb") as f:
             self.assertEqual(f.read(), self.body, "a corrupt or stale copy is replaced")
         self.assertEqual(sorted(os.listdir(self.out)), ["aiaf-tool.xlsx"], "no temporary files are left behind")
+        self.assertEqual(set(self.limits), {aiaf.MAX_PAGE_BYTES, aiaf.MAX_DOWNLOAD_BYTES}, "every fetch is size-limited")
 
     def test_rejects_an_invalid_download_and_keeps_nothing(self):
         self.body = b"not a workbook"
@@ -398,27 +404,72 @@ class DownloadTest(unittest.TestCase):
                 aiaf.TrustedRedirects().redirect_request(None, None, 302, "Found", {}, newurl)
 
 
+class FakeProcess:
+    def __init__(self, stdout, returncode=0, stderr=b""):
+        self.stdout, self.stderr = io.BytesIO(stdout), io.BytesIO(stderr)
+        self.returncode, self.killed = returncode, False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self):
+        return self.returncode
+
+
 class CurlFallbackTest(unittest.TestCase):
-    """The curl fallback accepts a response only if its final URL is trusted."""
+    """The curl fallback streams with a size limit and accepts only a trusted final URL."""
 
     def setUp(self):
-        self.real_run, self.real_which = aiaf.subprocess.run, aiaf.shutil.which
+        self.real_popen, self.real_which = aiaf.subprocess.Popen, aiaf.shutil.which
         aiaf.shutil.which = lambda name: "/usr/bin/curl"
 
     def tearDown(self):
-        aiaf.subprocess.run, aiaf.shutil.which = self.real_run, self.real_which
+        aiaf.subprocess.Popen, aiaf.shutil.which = self.real_popen, self.real_which
 
-    def respond(self, stdout):
-        aiaf.subprocess.run = lambda args, **kwargs: types.SimpleNamespace(returncode=0, stdout=stdout, stderr=b"")
+    def respond(self, stdout, returncode=0, stderr=b""):
+        self.process = FakeProcess(stdout, returncode, stderr)
+
+        def popen(args, **kwargs):
+            self.args = args
+            return self.process
+        aiaf.subprocess.Popen = popen
 
     def test_returns_the_body_when_the_final_url_is_trusted(self):
         self.respond(b"line one\nline two\n\nhttps://www.digital.nsw.gov.au/a.xlsx")
-        self.assertEqual(aiaf.curl_fetch("https://www.digital.nsw.gov.au/a.xlsx", 5, "test"), b"line one\nline two\n")
+        self.assertEqual(aiaf.curl_fetch("https://www.digital.nsw.gov.au/a.xlsx", 5, "test", 1000), b"line one\nline two\n")
+        self.assertIn("--max-filesize", self.args)
 
     def test_rejects_a_redirect_to_another_host(self):
         self.respond(b"tampered\nhttps://attacker.example.org/a.xlsx")
         with self.assertRaisesRegex(aiaf.WorkbookError, "not a nsw.gov.au site"):
-            aiaf.curl_fetch("https://www.digital.nsw.gov.au/a.xlsx", 5, "test")
+            aiaf.curl_fetch("https://www.digital.nsw.gov.au/a.xlsx", 5, "test", 1000)
+
+    def test_stops_reading_an_oversized_response(self):
+        self.respond(b"x" * 20000 + b"\nhttps://www.digital.nsw.gov.au/a.xlsx")
+        with self.assertRaisesRegex(aiaf.WorkbookError, "larger than 100 bytes"):
+            aiaf.curl_fetch("https://www.digital.nsw.gov.au/a.xlsx", 5, "test", 100)
+        self.assertTrue(self.process.killed)
+        self.respond(b"x" * 150 + b"\nhttps://www.digital.nsw.gov.au/a.xlsx")
+        with self.assertRaisesRegex(aiaf.WorkbookError, "larger than 100 bytes"):
+            aiaf.curl_fetch("https://www.digital.nsw.gov.au/a.xlsx", 5, "test", 100)
+
+    def test_reports_curl_failures(self):
+        self.respond(b"", returncode=63, stderr=b"curl: (63) Maximum file size exceeded")
+        with self.assertRaisesRegex(aiaf.WorkbookError, "Maximum file size exceeded"):
+            aiaf.curl_fetch("https://www.digital.nsw.gov.au/a.xlsx", 5, "test", 100)
+
+
+class ReadLimitedTest(unittest.TestCase):
+    def test_reads_up_to_the_limit_only(self):
+        self.assertEqual(aiaf.read_limited(io.BytesIO(b"x" * 100), 100, "u"), b"x" * 100)
+        with self.assertRaisesRegex(aiaf.WorkbookError, "u is larger than 99 bytes"):
+            aiaf.read_limited(io.BytesIO(b"x" * 100), 99, "u")
 
 
 @unittest.skipUnless(os.environ.get("AIAF_WORKBOOK"), "set AIAF_WORKBOOK to test the official workbook")

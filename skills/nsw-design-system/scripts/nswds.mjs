@@ -331,7 +331,12 @@ export function parseApproval(pattern) {
   const value = String(pattern).trim()
   if (/^https:\/\//i.test(value)) {
     const url = new URL(value)
-    return { origin: url.origin, path: url.pathname, prefix: url.pathname.endsWith('/') }
+    // Prefix matching needs a "/" the user wrote; URL() adds one to a bare origin.
+    const written = value.replace(/^https:\/\/[^/?#]*/i, '').split(/[?#]/)[0]
+    if (!written) {
+      throw new Error(`approval "${value}" names a whole site; add a trailing / to approve everything on it, or give a file's address`)
+    }
+    return { origin: url.origin, path: url.pathname, prefix: written.endsWith('/') }
   }
   if (/^\.{0,2}\//.test(value) && !value.startsWith('//')) {
     const path = value.split(/[?#]/)[0]

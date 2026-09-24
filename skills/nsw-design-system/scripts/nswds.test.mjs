@@ -306,7 +306,7 @@ test('inline scripts fail unless the user approved them', () => withKit((kit) =>
 test('approvals match the exact address, never a lookalike', () => {
   const approvals = ['https://analytics.example.com/', 'https://cdn.example.com/lib/app.js', '/build/site.css', './js/'].map(parseApproval)
   for (const url of ['https://analytics.example.com/a.js', 'https://cdn.example.com/lib/app.js', '//analytics.example.com/b.js',
-    '/build/site.css', '/build/site.css?v=2', './js/app.js']) assert.ok(approved(url, approvals), url)
+    '/build/site.css', './js/app.js', 'https://cdn.example.com/lib/app.js#section']) assert.ok(approved(url, approvals), url)
   for (const url of ['https://evil-analytics.example.com/a.js', 'https://analytics.example.com.evil.org/a.js',
     'http://analytics.example.com/a.js', 'https://cdn.example.com/lib/app.js.evil', 'https://cdn.example.com/lib/other.js',
     '/build/site.css.map', '/other/build/site.css', 'https://x.example.org/build/site.css', 'javascript:alert(1)']) {
@@ -321,6 +321,18 @@ test('approvals match the exact address, never a lookalike', () => {
   const site = [parseApproval('https://analytics.example.com/')]
   assert.ok(approved('https://analytics.example.com/any/file.js', site), 'an explicit trailing / approves the whole site')
   assert.ok(!approved('https://cdn.example.com/lib/app.js/extra', approvals), 'a file approval is not a prefix')
+})
+
+test('exact approvals compare the query string; folder approvals do not', () => {
+  const exact = ['https://cdn.example.com/lib/app.js', '/build/site.css', 'https://cdn.example.com/x.js?v=2', '/build/app.css?v=2']
+    .map(parseApproval)
+  for (const url of ['https://cdn.example.com/lib/app.js?untrusted=1', '/build/site.css?v=2', 'https://cdn.example.com/x.js',
+    'https://cdn.example.com/x.js?v=3', '/build/app.css', '/build/app.css?v=2&x=1']) {
+    assert.ok(!approved(url, exact), url)
+  }
+  for (const url of ['https://cdn.example.com/x.js?v=2', '/build/app.css?v=2', '/build/app.css?v=2#top']) assert.ok(approved(url, exact), url)
+  const folder = [parseApproval('https://cdn.example.com/lib/'), parseApproval('/build/')]
+  for (const url of ['https://cdn.example.com/lib/app.js?v=9', '/build/site.css?v=2']) assert.ok(approved(url, folder), url)
 })
 
 test('relative approvals resolve dot segments before comparing', () => {

@@ -358,7 +358,8 @@ const unescapeAmp = (url) => url.replace(/&amp;/g, '&')
 
 // An approval names an exact https:// file, everything under an https:// path ending in
 // "/", or a path on the page's own site starting with "/" or "./". Matching is on the
-// parsed origin and path, never a substring, so a lookalike host is not approved.
+// parsed origin and path, never a substring, so a lookalike host is not approved. An exact
+// approval also compares the query string; fragments are ignored, as browsers never send them.
 export function parseApproval(pattern) {
   const value = String(pattern).trim()
   if (/^https:\/\//i.test(value)) {
@@ -368,11 +369,12 @@ export function parseApproval(pattern) {
     if (!written) {
       throw new Error(`approval "${value}" names a whole site; add a trailing / to approve everything on it, or give a file's address`)
     }
-    return { origin: url.origin, path: url.pathname, prefix: written.endsWith('/') }
+    return { origin: url.origin, path: url.pathname, search: url.search, prefix: written.endsWith('/') }
   }
   if (/^\.{0,2}\//.test(value) && !value.startsWith('//')) {
     const written = value.split(/[?#]/)[0]
-    return { origin: null, path: relativePath(written), prefix: written.endsWith('/') }
+    const url = resolveRelative(value)
+    return { origin: null, path: url.pathname, search: url.search, prefix: written.endsWith('/') }
   }
   throw new Error(`approval "${value}" must be an https:// address or a path starting with / or ./`)
 }
@@ -380,29 +382,24 @@ export function parseApproval(pattern) {
 // Resolves "." and ".." segments (including percent-encoded ones) the way a browser
 // does, so "/build/../evil.js" is compared as "/evil.js".
 const RELATIVE_BASE = 'https://relative.invalid/page/'
-const relativePath = (path) => new URL(path, RELATIVE_BASE).pathname
+const resolveRelative = (url) => new URL(url.split('#')[0], RELATIVE_BASE)
 
 export function approved(url, approvals) {
   const absolute = /^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith('//')
   let origin = null
-  let path
-  if (!absolute) {
-    try {
-      path = relativePath(url.split(/[?#]/)[0])
-    } catch {
-      return false
-    }
-  } else {
-    try {
-      const parsed = new URL(url.startsWith('//') ? `https:${url}` : url)
-      if (parsed.protocol !== 'https:') return false
-      origin = parsed.origin
-      path = parsed.pathname
-    } catch {
-      return false
-    }
+  let parsed
+  try {
+    parsed = absolute ? new URL(url.startsWith('//') ? `https:${url}` : url) : resolveRelative(url)
+  } catch {
+    return false
   }
-  return approvals.some((a) => a.origin === origin && (a.prefix ? path.startsWith(a.path) : path === a.path))
+  if (absolute) {
+    if (parsed.protocol !== 'https:') return false
+    origin = parsed.origin
+  }
+  const { pathname: path, search } = parsed
+  return approvals.some((a) => a.origin === origin
+    && (a.prefix ? path.startsWith(a.path) : path === a.path && search === a.search))
 }
 
 // Class names, inline style values and Google Fonts links the release itself uses.
@@ -551,7 +548,7 @@ Options:
   --design-system-js <url>       your bundled design system JavaScript
   --allow-stylesheet <url>       an approved third-party stylesheet
   --allow-script <url>           an approved third-party script
-                                 <url> is an exact https:// address, an https:// path ending in / for
+                                 <url> is an exact https:// address (query included), an https:// path ending in / for
                                  everything under it, or a path on your site starting with / or ./
   --allow-inline-script <text>   accept an approved inline script whose content contains <text>
   --force                        let template overwrite --out`

@@ -274,6 +274,29 @@ test('inline scripts fail unless the user approved them', () => withKit((kit) =>
   assert.deepEqual(checkPage(page, { ...rules, allowInlineScripts: ['gtag('] }), [])
 }))
 
+test('blank approval patterns approve nothing', () => withKit((kit, root) => {
+  const page = `<link rel="stylesheet" href="https://x.example.org/a.css">
+<script src="https://x.example.org/a.js"></script><script>doSomething()</script><p class="nsw-card">x</p>`
+  const blank = ['', ' ']
+  const messages = checkPage(page, {
+    version: '9.1.0', ...loadRules(kit),
+    designSystemCss: blank, designSystemJs: blank, allowStylesheets: blank, allowScripts: blank, allowInlineScripts: blank,
+  }).map((i) => i.message)
+  for (const pattern of [/no design system stylesheet/, /stylesheet not from the design system release/,
+    /script not from the design system release/, /inline script not from the design system release/]) {
+    assert.ok(messages.some((m) => pattern.test(m)), `${pattern}\n${messages.join('\n')}`)
+  }
+  const out = join(root, 'page.html')
+  writeFileSync(out, page)
+  for (const flag of ['--design-system-css', '--design-system-js', '--allow-stylesheet', '--allow-script', '--allow-inline-script']) {
+    const result = spawnSync(process.execPath, [script, 'check', out, '--version', '9.1.0', flag, ''], {
+      encoding: 'utf8', env: { ...process.env, NSWDS_CACHE_DIR: root },
+    })
+    assert.equal(result.status, 1, flag)
+    assert.match(result.stderr, new RegExp(`${flag} needs a non-empty value`))
+  }
+}))
+
 test('checks unquoted and upper-case attributes', () => withKit((kit) => {
   const base = `<link rel=stylesheet href=https://cdn.jsdelivr.net/npm/nsw-design-system@9.1.0/dist/css/main.css>`
   const messages = checkPage(`${base}

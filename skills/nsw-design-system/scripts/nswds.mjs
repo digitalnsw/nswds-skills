@@ -357,7 +357,8 @@ export function checkPage(source, {
   const issues = []
   const lineOf = (index) => html.slice(0, index).split('\n').length
   const add = (level, index, message) => issues.push({ level, line: lineOf(index), message })
-  const matches = (url, patterns) => patterns.some((p) => url.includes(p))
+  // An empty pattern would match everything, so only non-blank patterns count.
+  const matches = (value, patterns) => patterns.some((p) => typeof p === 'string' && p.trim() !== '' && value.includes(p))
   const dsAsset = (url, kind) => {
     const m = url.match(/^https:\/\/cdn\.jsdelivr\.net\/npm\/nsw-design-system@([^/]+)\/dist\/(css|js)\/([a-z.]+)$/)
     if (!m || m[2] !== kind) return null
@@ -423,7 +424,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     const value = () => {
-      if (i + 1 >= argv.length) throw new Error(`${arg} needs a value`)
+      if (i + 1 >= argv.length || !argv[i + 1].trim()) throw new Error(`${arg} needs a non-empty value`)
       return argv[++i]
     }
     if (arg === '--version') options.version = value()

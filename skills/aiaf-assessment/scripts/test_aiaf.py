@@ -268,6 +268,14 @@ class AiafTest(unittest.TestCase):
         self.assertIn("error: xl/sharedStrings.xml is not valid XML", err)
         self.assertNotIn("Traceback", err)
 
+    def test_reports_missing_shared_strings_cleanly(self):
+        for bad in (b"<v>9999</v>", b"<v>-1</v>", b"<v>x</v>"):
+            path = self.rewrite_part("xl/worksheets/sheet3.xml", lambda data: data.replace(b"<v>25</v>", bad, 1))
+            code, _, err = self.run_cli("questions", "--workbook", path)
+            self.assertEqual(code, 1, bad)
+            self.assertIn("error: Assessment!C3 points to shared string", err)
+            self.assertNotIn("Traceback", err)
+
     def test_reports_corrupt_compressed_data_cleanly(self):
         path = self.rewrite_part("xl/sharedStrings.xml", lambda data: data, stored=True)
         with open(path, "rb") as f:

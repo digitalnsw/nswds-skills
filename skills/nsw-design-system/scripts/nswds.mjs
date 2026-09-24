@@ -347,10 +347,11 @@ export function loadRules(kit) {
 // Flags anything on a page that does not come from the design system release.
 // designSystemCss/designSystemJs name a compiled design system bundle (an npm and Sass
 // build); allowStylesheets/allowScripts name approved third-party assets, which are
-// accepted but never count as the design system itself.
+// accepted but never count as the design system itself. Inline scripts other than the
+// initSite call fail unless their content contains an allowInlineScripts entry.
 export function checkPage(source, {
   version, classes, styles = new Set(),
-  designSystemCss = [], designSystemJs = [], allowStylesheets = [], allowScripts = [],
+  designSystemCss = [], designSystemJs = [], allowStylesheets = [], allowScripts = [], allowInlineScripts = [],
 }) {
   const html = withoutComments(source)
   const issues = []
@@ -396,8 +397,8 @@ export function checkPage(source, {
       else add('error', m.index, `script not from the design system release: ${src || '(empty src)'}`)
     } else if (/^\s*window\.NSW\.initSite\(\);?\s*$/.test(m[2])) {
       init = true
-    } else if (m[2].trim()) {
-      add('warning', m.index, 'inline script: confirm no design system component already provides this behaviour')
+    } else if (m[2].trim() && !matches(m[2], allowInlineScripts)) {
+      add('error', m.index, 'inline script not from the design system release; use a design system component, or pass --allow-inline-script if the user approved it')
     }
   }
   const classMatches = [...html.matchAll(classAttr)]
@@ -418,7 +419,7 @@ export function checkPage(source, {
 }
 
 function parseArgs(argv) {
-  const options = { positional: [], designSystemCss: [], designSystemJs: [], allowStylesheets: [], allowScripts: [] }
+  const options = { positional: [], designSystemCss: [], designSystemJs: [], allowStylesheets: [], allowScripts: [], allowInlineScripts: [] }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     const value = () => {
@@ -432,6 +433,7 @@ function parseArgs(argv) {
     else if (arg === '--design-system-js') options.designSystemJs.push(value())
     else if (arg === '--allow-stylesheet') options.allowStylesheets.push(value())
     else if (arg === '--allow-script') options.allowScripts.push(value())
+    else if (arg === '--allow-inline-script') options.allowInlineScripts.push(value())
     else if (arg.startsWith('--')) throw new Error(`Unknown option ${arg}`)
     else options.positional.push(arg)
   }
@@ -454,6 +456,7 @@ Options:
   --design-system-js <text>      your bundled design system JavaScript: URL contains <text>
   --allow-stylesheet <text>      accept an approved third-party stylesheet whose URL contains <text>
   --allow-script <text>          accept an approved third-party script whose URL contains <text>
+  --allow-inline-script <text>   accept an approved inline script whose content contains <text>
   --force                        let template overwrite --out`
 
 async function main(argv) {
@@ -523,6 +526,7 @@ async function main(argv) {
         version, ...rules,
         designSystemCss: options.designSystemCss, designSystemJs: options.designSystemJs,
         allowStylesheets: options.allowStylesheets, allowScripts: options.allowScripts,
+        allowInlineScripts: options.allowInlineScripts,
       })
       for (const issue of issues) console.log(`${file}:${issue.line}: ${issue.level}: ${issue.message}`)
       errors += issues.filter((i) => i.level === 'error').length

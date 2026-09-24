@@ -223,6 +223,16 @@ class Workbook:
         root = parse_xml(self.read("xl/sharedStrings.xml"), "xl/sharedStrings.xml")
         return [rich_text(si) for si in root.iter(f"{MAIN}si")]
 
+    def shared_string(self, index, ref, sheet):
+        try:
+            number = int(index)
+            if number < 0:
+                raise IndexError(number)
+            return self.shared[number]
+        except (ValueError, IndexError):
+            raise WorkbookError(f"{sheet}!{ref} points to shared string {index!r}, which does not exist; "
+                                "the workbook is corrupt")
+
     def sheet_part(self, name):
         if name not in self.sheet_paths:
             raise WorkbookError(f'sheet "{name}" not found; the workbook layout has changed')
@@ -241,7 +251,7 @@ class Workbook:
                 v = c.find(f"{MAIN}v")
                 if v is None or v.text is None:
                     continue
-                value = self.shared[int(v.text)] if kind == "s" else v.text
+                value = self.shared_string(v.text, c.get("r"), name) if kind == "s" else v.text
             if value != "":
                 values[c.get("r")] = value
         return values

@@ -235,7 +235,7 @@ test('flags everything that is not from the design system release', () => withKi
     /^error:7:nsw-docs__example is a docs-site class/,
     /^error:7:class "my-card" is not defined/,
     /^error:10:script not from the design system release/,
-    /^warning:11:inline script/,
+    /^error:11:inline script not from the design system release/,
     /^error:1:design system JavaScript is loaded but window\.NSW\.initSite\(\) is never called/,
   ]
   for (const pattern of expect) assert.ok(messages.some((m) => pattern.test(m)), `missing ${pattern}\n${messages.join('\n')}`)
@@ -264,6 +264,14 @@ test('approved third-party assets never stand in for the design system', () => w
   assert.ok(messages.some((m) => /initSite\(\) is called but the design system JavaScript is not loaded/.test(m)), messages.join('\n'))
   assert.ok(messages.some((m) => /js- hooks/.test(m)), messages.join('\n'))
   assert.ok(!messages.some((m) => /not from the design system release/.test(m)), 'approved assets are accepted')
+}))
+
+test('inline scripts fail unless the user approved them', () => withKit((kit) => {
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  const page = html.replace('</body>', '<script>gtag("config", "G-TEST")</script>\n</body>')
+  const rules = { version: '9.1.0', ...loadRules(kit) }
+  assert.match(checkPage(page, rules).map((i) => `${i.level}:${i.message}`).join('\n'), /^error:inline script not from the design system release/m)
+  assert.deepEqual(checkPage(page, { ...rules, allowInlineScripts: ['gtag('] }), [])
 }))
 
 test('checks unquoted and upper-case attributes', () => withKit((kit) => {

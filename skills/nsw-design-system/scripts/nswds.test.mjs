@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { deflateRawSync } from 'node:zlib'
 import {
   cachedVersions, checkPage, cssClasses, examplesOf, extractKit, guidanceOf, kitVersion,
-  listKit, loadRules, readZip, resolveVersion, standaloneTemplate, styleKey, themeOnly,
+  approved, listKit, loadRules, parseApproval, readZip, resolveVersion, standaloneTemplate, styleKey, themeOnly,
 } from './nswds.mjs'
 
 const script = fileURLToPath(new URL('./nswds.mjs', import.meta.url))
@@ -258,7 +258,8 @@ test('approved third-party assets never stand in for the design system', () => w
 <script>window.NSW.initSite()</script>
 <div class="nsw-tabs js-tabs"></div>`
   const messages = checkPage(page, {
-    version: '9.1.0', ...loadRules(kit), allowStylesheets: ['maps.example.org'], allowScripts: ['analytics.example.org'],
+    version: '9.1.0', ...loadRules(kit),
+    allowStylesheets: ['https://maps.example.org/map.css'], allowScripts: ['https://analytics.example.org/'],
   }).map((i) => i.message)
   assert.ok(messages.some((m) => /no design system stylesheet/.test(m)), messages.join('\n'))
   assert.ok(messages.some((m) => /initSite\(\) is called but the design system JavaScript is not loaded/.test(m)), messages.join('\n'))
@@ -272,6 +273,29 @@ test('inline scripts fail unless the user approved them', () => withKit((kit) =>
   const rules = { version: '9.1.0', ...loadRules(kit) }
   assert.match(checkPage(page, rules).map((i) => `${i.level}:${i.message}`).join('\n'), /^error:inline script not from the design system release/m)
   assert.deepEqual(checkPage(page, { ...rules, allowInlineScripts: ['gtag('] }), [])
+}))
+
+test('approvals match the exact address, never a lookalike', () => {
+  const approvals = ['https://analytics.example.com/', 'https://cdn.example.com/lib/app.js', '/build/site.css', './js/'].map(parseApproval)
+  for (const url of ['https://analytics.example.com/a.js', 'https://cdn.example.com/lib/app.js', '//analytics.example.com/b.js',
+    '/build/site.css', '/build/site.css?v=2', './js/app.js']) assert.ok(approved(url, approvals), url)
+  for (const url of ['https://evil-analytics.example.com/a.js', 'https://analytics.example.com.evil.org/a.js',
+    'http://analytics.example.com/a.js', 'https://cdn.example.com/lib/app.js.evil', 'https://cdn.example.com/lib/other.js',
+    '/build/site.css.map', '/other/build/site.css', 'https://x.example.org/build/site.css', 'javascript:alert(1)']) {
+    assert.ok(!approved(url, approvals), url)
+  }
+  for (const bad of ['analytics.example.com', 'http://analytics.example.com/', '//analytics.example.com/', 'js/app.js']) {
+    assert.throws(() => parseApproval(bad), /must be an https:\/\/ address or a path starting with \/ or \.\//, bad)
+  }
+})
+
+test('only the Google Fonts links the release uses are accepted', () => withKit((kit) => {
+  const rules = { version: '9.1.0', ...loadRules(kit) }
+  assert.ok(rules.fonts.has('https://fonts.googleapis.com/css2?family=Public+Sans&display=swap'))
+  const { html } = standaloneTemplate(templatePage, '9.1.0')
+  assert.deepEqual(checkPage(html.replace('&display=swap', '&amp;display=swap'), rules), [], 'an escaped & matches')
+  const other = html.replace('</head>', '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Comic+Neue">\n</head>')
+  assert.match(checkPage(other, rules).map((i) => i.message).join('\n'), /stylesheet not from the design system release: https:\/\/fonts\.googleapis\.com\/css2\?family=Comic\+Neue/)
 }))
 
 test('blank approval patterns approve nothing', () => withKit((kit, root) => {
@@ -288,13 +312,17 @@ test('blank approval patterns approve nothing', () => withKit((kit, root) => {
   }
   const out = join(root, 'page.html')
   writeFileSync(out, page)
+  const run = (...args) => spawnSync(process.execPath, [script, 'check', out, '--version', '9.1.0', ...args], {
+    encoding: 'utf8', env: { ...process.env, NSWDS_CACHE_DIR: root },
+  })
   for (const flag of ['--design-system-css', '--design-system-js', '--allow-stylesheet', '--allow-script', '--allow-inline-script']) {
-    const result = spawnSync(process.execPath, [script, 'check', out, '--version', '9.1.0', flag, ''], {
-      encoding: 'utf8', env: { ...process.env, NSWDS_CACHE_DIR: root },
-    })
+    const result = run(flag, '')
     assert.equal(result.status, 1, flag)
     assert.match(result.stderr, new RegExp(`${flag} needs a non-empty value`))
   }
+  const bare = run('--allow-script', 'x.example.org')
+  assert.equal(bare.status, 1)
+  assert.match(bare.stderr, /approval "x\.example\.org" must be an https:\/\/ address/)
 }))
 
 test('checks unquoted and upper-case attributes', () => withKit((kit) => {

@@ -321,10 +321,47 @@ export function themeOnly(css) {
   return blocks.every((b) => b[1].split(';').map((d) => d.trim()).filter(Boolean).every((d) => /^--nsw-[a-z0-9-]+\s*:/.test(d)))
 }
 
-// Class names and inline style values the release itself uses, from its CSS and its markup.
+const FONTS = /\bhref\s*=\s*["']?(https:\/\/fonts\.googleapis\.com\/[^"'\s>]+)/gi
+const unescapeAmp = (url) => url.replace(/&amp;/g, '&')
+
+// An approval names an exact https:// file, everything under an https:// path ending in
+// "/", or a path on the page's own site starting with "/" or "./". Matching is on the
+// parsed origin and path, never a substring, so a lookalike host is not approved.
+export function parseApproval(pattern) {
+  const value = String(pattern).trim()
+  if (/^https:\/\//i.test(value)) {
+    const url = new URL(value)
+    return { origin: url.origin, path: url.pathname, prefix: url.pathname.endsWith('/') }
+  }
+  if (/^\.{0,2}\//.test(value) && !value.startsWith('//')) {
+    const path = value.split(/[?#]/)[0]
+    return { origin: null, path, prefix: path.endsWith('/') }
+  }
+  throw new Error(`approval "${value}" must be an https:// address or a path starting with / or ./`)
+}
+
+export function approved(url, approvals) {
+  const absolute = /^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith('//')
+  let origin = null
+  let path = url.split(/[?#]/)[0]
+  if (absolute) {
+    try {
+      const parsed = new URL(url.startsWith('//') ? `https:${url}` : url)
+      if (parsed.protocol !== 'https:') return false
+      origin = parsed.origin
+      path = parsed.pathname
+    } catch {
+      return false
+    }
+  }
+  return approvals.some((a) => a.origin === origin && (a.prefix ? path.startsWith(a.path) : path === a.path))
+}
+
+// Class names, inline style values and Google Fonts links the release itself uses.
 export function loadRules(kit) {
   const classes = cssClasses(readFileSync(join(kit, 'css', 'main.css'), 'utf8'))
   const styles = new Set()
+  const fonts = new Set()
   const walk = (dir, collectStyles) => {
     if (!existsSync(dir)) return
     for (const d of readdirSync(dir, { withFileTypes: true })) {
@@ -332,6 +369,7 @@ export function loadRules(kit) {
       if (d.isDirectory()) walk(path, collectStyles)
       else if (d.name.endsWith('.html')) {
         const html = withoutComments(readFileSync(path, 'utf8'))
+        for (const m of html.matchAll(FONTS)) fonts.add(unescapeAmp(m[1]))
         for (const m of html.matchAll(classAttr)) {
           for (const name of valueOf(m).split(/\s+/)) if (name && !name.startsWith('nsw-docs') && !name.startsWith('hljs')) classes.add(name)
         }
@@ -341,7 +379,7 @@ export function loadRules(kit) {
   }
   for (const group of ['components', 'core', join('docs', 'content')]) walk(join(kit, group), true)
   walk(join(kit, 'templates'), false)
-  return { classes, styles }
+  return { classes, styles, fonts }
 }
 
 // Flags anything on a page that does not come from the design system release.
@@ -350,15 +388,18 @@ export function loadRules(kit) {
 // accepted but never count as the design system itself. Inline scripts other than the
 // initSite call fail unless their content contains an allowInlineScripts entry.
 export function checkPage(source, {
-  version, classes, styles = new Set(),
+  version, classes, styles = new Set(), fonts = new Set(),
   designSystemCss = [], designSystemJs = [], allowStylesheets = [], allowScripts = [], allowInlineScripts = [],
 }) {
   const html = withoutComments(source)
   const issues = []
   const lineOf = (index) => html.slice(0, index).split('\n').length
   const add = (level, index, message) => issues.push({ level, line: lineOf(index), message })
-  // An empty pattern would match everything, so only non-blank patterns count.
-  const matches = (value, patterns) => patterns.some((p) => typeof p === 'string' && p.trim() !== '' && value.includes(p))
+  // Blank patterns would approve everything, so they are ignored.
+  const nonBlank = (patterns) => patterns.filter((p) => typeof p === 'string' && p.trim() !== '')
+  const approvals = (patterns) => nonBlank(patterns).map(parseApproval)
+  const [dsCss, dsJs, otherCss, otherJs] = [designSystemCss, designSystemJs, allowStylesheets, allowScripts].map(approvals)
+  const inlineApproved = (content) => nonBlank(allowInlineScripts).some((p) => content.includes(p))
   const dsAsset = (url, kind) => {
     const m = url.match(/^https:\/\/cdn\.jsdelivr\.net\/npm\/nsw-design-system@([^/]+)\/dist\/(css|js)\/([a-z.]+)$/)
     if (!m || m[2] !== kind) return null
@@ -377,12 +418,12 @@ export function checkPage(source, {
   let stylesheet = false
   for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
     if (!(attr(m[0], 'rel') ?? '').toLowerCase().split(/\s+/).includes('stylesheet')) continue
-    const href = attr(m[0], 'href') ?? ''
+    const href = unescapeAmp(attr(m[0], 'href') ?? '')
     const asset = dsAsset(href, 'css')
     if (asset && ['main.css', 'core.css'].includes(asset.file)) { stylesheet = true; pinned(m.index, asset) }
-    else if (href && matches(href, designSystemCss)) stylesheet = true
-    else if (href.startsWith('https://fonts.googleapis.com/')) continue
-    else if (href && matches(href, allowStylesheets)) continue
+    else if (href && approved(href, dsCss)) stylesheet = true
+    else if (fonts.has(href)) continue
+    else if (href && approved(href, otherCss)) continue
     else add('error', m.index, `stylesheet not from the design system release: ${href || '(no href)'}`)
   }
   if (!stylesheet) add('error', 0, `no design system stylesheet; link ${cdn(version, 'css/main.css')} or pass --design-system-css for your compiled design system bundle`)
@@ -393,12 +434,12 @@ export function checkPage(source, {
     if (src !== undefined) {
       const asset = dsAsset(src, 'js')
       if (asset && ['main.js', 'main.min.js'].includes(asset.file)) { script = true; pinned(m.index, asset) }
-      else if (src && matches(src, designSystemJs)) script = true
-      else if (src && matches(src, allowScripts)) continue
+      else if (src && approved(src, dsJs)) script = true
+      else if (src && approved(src, otherJs)) continue
       else add('error', m.index, `script not from the design system release: ${src || '(empty src)'}`)
     } else if (/^\s*window\.NSW\.initSite\(\);?\s*$/.test(m[2])) {
       init = true
-    } else if (m[2].trim() && !matches(m[2], allowInlineScripts)) {
+    } else if (m[2].trim() && !inlineApproved(m[2])) {
       add('error', m.index, 'inline script not from the design system release; use a design system component, or pass --allow-inline-script if the user approved it')
     }
   }
@@ -427,13 +468,18 @@ function parseArgs(argv) {
       if (i + 1 >= argv.length || !argv[i + 1].trim()) throw new Error(`${arg} needs a non-empty value`)
       return argv[++i]
     }
+    const url = () => {
+      const approval = value()
+      parseApproval(approval)
+      return approval
+    }
     if (arg === '--version') options.version = value()
     else if (arg === '--out') options.out = value()
     else if (arg === '--force') options.force = true
-    else if (arg === '--design-system-css') options.designSystemCss.push(value())
-    else if (arg === '--design-system-js') options.designSystemJs.push(value())
-    else if (arg === '--allow-stylesheet') options.allowStylesheets.push(value())
-    else if (arg === '--allow-script') options.allowScripts.push(value())
+    else if (arg === '--design-system-css') options.designSystemCss.push(url())
+    else if (arg === '--design-system-js') options.designSystemJs.push(url())
+    else if (arg === '--allow-stylesheet') options.allowStylesheets.push(url())
+    else if (arg === '--allow-script') options.allowScripts.push(url())
     else if (arg === '--allow-inline-script') options.allowInlineScripts.push(value())
     else if (arg.startsWith('--')) throw new Error(`Unknown option ${arg}`)
     else options.positional.push(arg)
@@ -453,10 +499,12 @@ const USAGE = `Usage: node nswds.mjs <command> [options]
 
 Options:
   --version <x.y.z>              use this release instead of the latest
-  --design-system-css <text>     your compiled design system stylesheet (npm and Sass build): URL contains <text>
-  --design-system-js <text>      your bundled design system JavaScript: URL contains <text>
-  --allow-stylesheet <text>      accept an approved third-party stylesheet whose URL contains <text>
-  --allow-script <text>          accept an approved third-party script whose URL contains <text>
+  --design-system-css <url>      your compiled design system stylesheet (npm and Sass build)
+  --design-system-js <url>       your bundled design system JavaScript
+  --allow-stylesheet <url>       an approved third-party stylesheet
+  --allow-script <url>           an approved third-party script
+                                 <url> is an exact https:// address, an https:// path ending in / for
+                                 everything under it, or a path on your site starting with / or ./
   --allow-inline-script <text>   accept an approved inline script whose content contains <text>
   --force                        let template overwrite --out`
 

@@ -41,7 +41,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.13'
+          python-version: '3.14'
           check-latest: true
       - name: Download the current official workbook
         run: python3 skills/aiaf-assessment/scripts/aiaf.py download --dir "$RUNNER_TEMP/aiaf"

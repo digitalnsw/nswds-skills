@@ -23,13 +23,17 @@ Check the circular and the AIAF page for changes before relying on these points,
 
 ## Tools
 
-`scripts/aiaf.py` (Python 3.8 or later, standard library only) does the file work. Run it from this skill's directory or by full path:
+`scripts/aiaf.py` (Python 3.11 or later with Expat 2.7.2 or later, standard library only) does the file work. Run it from this skill's directory or by full path:
 
 ```bash
 python3 scripts/aiaf.py download --dir <folder>                      # current official workbook
 python3 scripts/aiaf.py questions --workbook <workbook.xlsx>          # every question, option and tag
 python3 scripts/aiaf.py fill --workbook <workbook.xlsx> --answers answers.json --out "<completed>.xlsx"
 ```
+
+The script checks Python and its linked Expat library before processing a command. If it reports an unsupported runtime, update the Python distribution and its linked Expat library, or use an installed interpreter that meets both requirements. Check with `python3 -c 'import sys; from xml.parsers import expat; print(sys.version, expat.EXPAT_VERSION)'`.
+
+Paths are selected by the person running this local CLI. Do not expose it as a service that accepts paths from untrusted users. See [security notes](references/security.md) for the XML safeguards and reviewed Snyk findings.
 
 The workbook is the single source of truth. `questions` reads the questions, answer options, tags and each option's technical and ethical description from the workbook's hidden Questions sheet. `fill` finds each answer cell from the workbook's own dropdowns, so a new version of the workbook works as long as its structure is the same. If the structure has changed, the script stops and says what it could not find. Do not work around that by hand-editing cells.
 

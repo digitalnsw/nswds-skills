@@ -16,7 +16,7 @@ Audit Record from the answers.
     python3 aiaf.py questions --workbook FILE [--json]
     python3 aiaf.py fill --workbook FILE --answers answers.json --out FILE
 
-Standard library only; Python 3.8 or later.
+Standard library only; Python 3.11 or later with Expat 2.7.2 or later.
 """
 import argparse
 import datetime
@@ -35,6 +35,7 @@ import urllib.request
 import zipfile
 import zlib
 from xml.etree import ElementTree
+from xml.parsers import expat
 from xml.sax.saxutils import escape
 
 PAGE_URL = ("https://www.digital.nsw.gov.au/policy/artificial-intelligence/"
@@ -152,8 +153,19 @@ def check_archive(path):
         raise WorkbookError(f"workbook's ZIP directory is {directory} bytes; refusing more than {MAX_CENTRAL_DIRECTORY}")
 
 
+def require_xml_runtime():
+    """Check the linked parser as well as Python: distributors can ship older Expat."""
+    if sys.version_info < (3, 11) or expat.version_info < (2, 7, 2):
+        raise WorkbookError(
+            "Python 3.11 or later with Expat 2.7.2 or later is required to read workbooks; "
+            f"found Python {sys.version.split()[0]} with {expat.EXPAT_VERSION}. "
+            "Update your Python distribution (and its linked Expat library)."
+        )
+
+
 def parse_xml(data, name):
     """Parse a workbook part already screened by Workbook.read."""
+    require_xml_runtime()
     try:
         return ElementTree.fromstring(data)
     except ElementTree.ParseError as e:
@@ -653,6 +665,8 @@ def main(argv=None):
     f.add_argument("--out", required=True, help="the completed workbook to write")
     args = parser.parse_args(argv)
     try:
+        # Refuse an unsupported runtime before downloading or creating any files.
+        require_xml_runtime()
         if args.command == "download":
             path, url, unchanged = download(args.dir)
             print(f"Downloaded{' (unchanged since last download)' if unchanged else ''}: {path}\nSource: {url}")

@@ -9,6 +9,7 @@ import re
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 import zipfile
 from contextlib import redirect_stderr, redirect_stdout
 
@@ -104,6 +105,48 @@ GOOD = {
              "over_5m_or_drf": "no", "completed_by": "A. Tester", "date_completed": "23/09/2026"},
     "answers": {"Q1": "phase:live", "Q2": "stakeholder:public"},
 }
+
+
+class XmlRuntimeTest(unittest.TestCase):
+    def test_refuses_old_python_before_parsing(self):
+        with patch.object(aiaf.sys, "version_info", (3, 10, 20)), \
+                patch.object(aiaf.expat, "version_info", (2, 7, 4)), \
+                patch.object(aiaf.ElementTree, "fromstring") as parse:
+            with self.assertRaisesRegex(aiaf.WorkbookError, "Python 3.11 or later"):
+                aiaf.parse_xml(b"<root/>", "test.xml")
+            parse.assert_not_called()
+
+    def test_refuses_old_expat_even_with_new_python(self):
+        with patch.object(aiaf.sys, "version_info", (3, 13, 7)), \
+                patch.object(aiaf.expat, "version_info", (2, 7, 1)), \
+                patch.object(aiaf.ElementTree, "fromstring") as parse:
+            with self.assertRaisesRegex(aiaf.WorkbookError, "Expat 2.7.2 or later"):
+                aiaf.parse_xml(b"<root/>", "test.xml")
+            parse.assert_not_called()
+
+    def test_accepts_minimum_runtime(self):
+        with patch.object(aiaf.sys, "version_info", (3, 11, 0)), \
+                patch.object(aiaf.expat, "version_info", (2, 7, 2)):
+            self.assertEqual(aiaf.parse_xml(b"<root>ok</root>", "test.xml").text, "ok")
+
+    def test_cli_refuses_old_runtime_before_io(self):
+        commands = [
+            ["download", "--dir", "unused"],
+            ["questions", "--workbook", "unused.xlsx"],
+            ["fill", "--workbook", "unused.xlsx", "--answers", "unused.json", "--out", "out.xlsx"],
+        ]
+        for args in commands:
+            with self.subTest(command=args[0]), \
+                    patch.object(aiaf.expat, "version_info", (2, 7, 1)), \
+                    patch.object(aiaf, "download") as download, \
+                    patch.object(aiaf, "Workbook") as workbook, \
+                    patch.object(aiaf, "fill") as fill, \
+                    redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(aiaf.main(args), 1)
+                self.assertIn("Update your Python distribution", err.getvalue())
+                download.assert_not_called()
+                workbook.assert_not_called()
+                fill.assert_not_called()
 
 
 class AiafTest(unittest.TestCase):

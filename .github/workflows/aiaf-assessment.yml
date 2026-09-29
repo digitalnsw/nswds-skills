@@ -18,10 +18,17 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12', '3.13', '3.14']
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          check-latest: true
       - run: python3 -m unittest discover -s skills/aiaf-assessment/scripts -v
   # Downloads the workbook Digital NSW currently publishes and runs the layout check
   # against it, so a change to the official workbook fails here rather than for users.
@@ -32,6 +39,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          check-latest: true
       - name: Download the current official workbook
         run: python3 skills/aiaf-assessment/scripts/aiaf.py download --dir "$RUNNER_TEMP/aiaf"
       - name: Test against it

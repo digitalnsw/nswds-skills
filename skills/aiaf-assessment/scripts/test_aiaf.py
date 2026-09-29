@@ -148,6 +148,29 @@ class XmlRuntimeTest(unittest.TestCase):
                 workbook.assert_not_called()
                 fill.assert_not_called()
 
+    def test_direct_entry_points_refuse_old_runtime_before_io(self):
+        with patch.object(aiaf.expat, "version_info", (2, 7, 1)), \
+                patch.object(aiaf, "check_archive") as check_archive, \
+                patch.object(aiaf.zipfile, "ZipFile") as zip_file:
+            with self.assertRaisesRegex(aiaf.WorkbookError, "Expat 2.7.2 or later"):
+                aiaf.Workbook("unused.xlsx")
+            check_archive.assert_not_called()
+            zip_file.assert_not_called()
+
+        with patch.object(aiaf.expat, "version_info", (2, 7, 1)), \
+                patch("builtins.open") as open_file:
+            with self.assertRaisesRegex(aiaf.WorkbookError, "Expat 2.7.2 or later"):
+                aiaf.fill("unused.xlsx", "unused.json", "out.xlsx")
+            open_file.assert_not_called()
+
+        with patch.object(aiaf.expat, "version_info", (2, 7, 1)), \
+                patch.object(aiaf, "fetch") as fetch, \
+                patch.object(aiaf.os, "makedirs") as makedirs:
+            with self.assertRaisesRegex(aiaf.WorkbookError, "Expat 2.7.2 or later"):
+                aiaf.download("unused")
+            fetch.assert_not_called()
+            makedirs.assert_not_called()
+
 
 class AiafTest(unittest.TestCase):
     def setUp(self):

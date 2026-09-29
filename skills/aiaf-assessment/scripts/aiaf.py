@@ -188,6 +188,7 @@ class Workbook:
     """Read-only view of the parts of the .xlsx package this script needs."""
 
     def __init__(self, path):
+        require_xml_runtime()
         self.path = path
         check_archive(path)
         try:
@@ -478,6 +479,7 @@ def force_recalc(xml):
 
 
 def fill(template, answers_path, out_path):
+    require_xml_runtime()
     with open(answers_path, encoding="utf-8") as f:
         data = json.load(f)
     book = Workbook(template)
@@ -614,6 +616,7 @@ def curl_once(curl, url, timeout, limit):
 def download(directory):
     """Fetch the current workbook, check it, and save it under its published name.
     Always downloads, so a workbook updated under the same name is picked up."""
+    require_xml_runtime()
     page = fetch(PAGE_URL, 60, MAX_PAGE_BYTES).decode("utf-8", "replace")
     links = re.findall(r'href="([^"]+\.xlsx)"', page, re.I)
     links = [l for l in links if "aiaf" in l.lower()] or links

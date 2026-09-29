@@ -1,3 +1,9 @@
+## [2.1.1](https://github.com/digitalnsw/nswds-skills/compare/v2.1.0...v2.1.1) (2026-09-29)
+
+### Bug Fixes
+
+* **aiaf:** require secure XML parser runtime ([#25](https://github.com/digitalnsw/nswds-skills/issues/25)) ([b5b512e](https://github.com/digitalnsw/nswds-skills/commit/b5b512ec79aa52f4b8ae0e83e6eef2fd434989de))
+
 ## [2.1.0](https://github.com/digitalnsw/nswds-skills/compare/v2.0.0...v2.1.0) (2026-09-24)
 
 ### Features

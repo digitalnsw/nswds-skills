@@ -379,6 +379,14 @@ ignore:
 # Listed as EXACT FILES, not `scripts/**` trees: a new script, or a new finding
 # in a script that is clean today, still surfaces instead of being pre-silenced.
 # Refresh this list when `snyk code test` reports a path not already here.
+#
+# aiaf-assessment/scripts/aiaf.py is the same shape: a CLI the assessor runs on
+# their own machine, so its path findings are operator-supplied arguments. The
+# one path built from fetched data, the downloaded workbook's name, is reduced
+# to its basename and must match a strict .xlsx pattern on a trusted host. The
+# XML finding is guarded at runtime: require_xml_runtime() refuses Python
+# before 3.11 and Expat before 2.7.2.
 exclude:
   code:
     - skills/australian-style-manual/evals/run.mjs
+    - skills/aiaf-assessment/scripts/aiaf.py

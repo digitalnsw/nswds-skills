@@ -33,7 +33,7 @@ python3 scripts/aiaf.py questions --workbook <workbook.xlsx>           # offline
 python3 scripts/aiaf.py fill --workbook <workbook.xlsx> --answers answers.json --out "<completed>.xlsx"
 ```
 
-`platform` needs Python 3.8 or later. `questions` and `fill` read workbook XML and need Python 3.11 or later with Expat 2.7.2 or later; they check this before doing anything. If they report an unsupported runtime, use an interpreter that meets both requirements (check with `python3 -c 'import sys; from xml.parsers import expat; print(sys.version, expat.EXPAT_VERSION)'`).
+`platform` needs Python 3.9 or later. `questions` and `fill` read workbook XML and need Python 3.11 or later with Expat 2.7.2 or later; they check this before doing anything. If they report an unsupported runtime, use an interpreter that meets both requirements (check with `python3 -c 'import sys; from xml.parsers import expat; print(sys.version, expat.EXPAT_VERSION)'`).
 
 Paths are selected by the person running this local CLI. Do not expose it as a service that accepts paths from untrusted users. See [security notes](references/security.md).
 

@@ -22,7 +22,8 @@ Audit Record from the answers.
     python3 aiaf.py fill --workbook FILE --answers answers.json --out FILE
     python3 aiaf.py platform --answers answers.json
 
-Standard library only; Python 3.11 or later with Expat 2.7.2 or later.
+Standard library only. `questions` and `fill` need Python 3.11 or later with Expat
+2.7.2 or later; `platform` reads no workbook XML and has no such requirement.
 """
 import argparse
 import datetime
@@ -37,8 +38,6 @@ from xml.etree import ElementTree
 from xml.parsers import expat
 from xml.sax.saxutils import escape
 
-PAGE_URL = ("https://www.digital.nsw.gov.au/policy/artificial-intelligence/"
-            "ai-governance-assurance-and-frameworks/nsw-ai-assessment-framework")
 MAIN = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 PKG_REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
@@ -587,6 +586,8 @@ def load_question_set(path=QUESTION_SET):
                 raise WorkbookError(f"{path}: option before any question: {line!r}")
             option = {"tag": m[1], "option_text": m[2], "technical": "", "ethical": ""}
             questions[-1]["options"].append(option)
+        elif line.strip() and not line.startswith("AIAF workbook"):
+            raise WorkbookError(f"{path}: unexpected line in the question set: {line!r}")
     if not questions:
         raise WorkbookError(f"{path} lists no questions")
     return questions
@@ -597,7 +598,8 @@ def check_platform_fields(data):
     errors = []
     triage = data.get("triage", {})
     if not isinstance(triage, dict):
-        return ["'triage' must be an object"]
+        errors.append("'triage' must be an object")
+        triage = {}
     for key in sorted(set(triage) - set(TRIAGE)):
         errors.append(f"triage.{key}: unknown field")
     for key, (_, options) in TRIAGE.items():
@@ -611,7 +613,12 @@ def check_platform_fields(data):
         return errors + ["'registration' must be an object"]
     for key in sorted(set(reg) - set(REGISTRATION_FIELDS)):
         errors.append(f"registration.{key}: unknown field")
-    title = str(reg.get("title") or "").strip()
+    for key in REGISTRATION_FIELDS:
+        if reg.get(key) is not None and not isinstance(reg[key], str):
+            errors.append(f"registration.{key} must be text")
+    if errors and any(e.endswith("must be text") for e in errors):
+        return errors
+    title = " ".join(str(reg.get("title") or "").split())
     if not title:
         errors.append("registration.title: missing")
     elif len(title) > MAX_TITLE_CHARS:
@@ -639,8 +646,8 @@ def platform_sheet(answers_path, question_set=QUESTION_SET):
     if not isinstance(data, dict):
         raise WorkbookError("answers file must be a JSON object with 'triage', 'registration' and 'answers'")
     questions = load_question_set(question_set)
-    errors = [f"unknown top-level keys: {', '.join(sorted(set(data) - {'triage', 'registration', 'answers'}))}"] \
-        if set(data) - {"triage", "registration", "answers"} else []
+    extra = set(data) - {"triage", "registration", "answers"}
+    errors = [f"unknown top-level keys: {', '.join(sorted(extra))}"] if extra else []
     errors += check_platform_fields(data)
     resolved, _, answer_errors = validate({"answers": data.get("answers", {})}, questions)
     errors += answer_errors
@@ -648,18 +655,23 @@ def platform_sheet(answers_path, question_set=QUESTION_SET):
         raise WorkbookError("could not build the Platform entry sheet:\n  - " + "\n  - ".join(errors))
     by_id = {q["id"]: q for q in questions}
     reg = data["registration"]
+
+    def cell(value):
+        # One line, and a literal | cannot end the Markdown table cell.
+        return " ".join(str(value or "").split()).replace("|", "\\|")
+
     lines = ["# AIAF Platform entry sheet", "", "## 1. Triage", ""]
     for n, (key, (question, _)) in enumerate(TRIAGE.items(), 1):
         lines.append(f"{n}. {question}  \n   **{data['triage'][key]}**")
-    platform = reg["platform"] + (f" (specify: {reg['platform_other'].strip()})" if reg["platform"] == "Other" else "")
+    platform = reg["platform"] + (f" (specify: {cell(reg['platform_other'])})" if reg["platform"] == "Other" else "")
     lines += ["", "## 2. Register the use case", "",
               "Agency, business owner and owner email are filled in from your sign-in.", "",
               "| Field | Enter |", "| --- | --- |",
-              f"| Use case title | {reg['title'].strip()} |",
-              f"| Team | {str(reg.get('team') or '').strip()} |",
+              f"| Use case title | {cell(reg['title'])} |",
+              f"| Team | {cell(reg.get('team'))} |",
               f"| Platform | {platform} |",
-              f"| Use case type | {reg['use_case_type']} |",
-              f"| Description | {' '.join(reg['description'].split())} |",
+              f"| Use case type | {cell(reg['use_case_type'])} |",
+              f"| Description | {cell(reg['description'])} |",
               "", "## 3. Assessment"]
     for section, ids in PLATFORM_SECTIONS:
         lines += ["", f"### {section}", ""]

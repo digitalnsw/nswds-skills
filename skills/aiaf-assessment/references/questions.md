@@ -17,7 +17,7 @@ The Platform shows each option's ethical description as an "Ethical consideratio
 
 ## Platform wording
 
-Options are worded the same in both. Some question titles differ:
+Options are worded the same in both, apart from punctuation (the Platform's Q4 "Operational or Organisational Data" option uses an em dash where the workbook text has a hyphen). Some question titles differ:
 
 | Question | Platform title |
 | --- | --- |

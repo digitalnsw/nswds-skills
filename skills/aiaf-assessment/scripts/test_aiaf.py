@@ -519,6 +519,31 @@ class PlatformSheetTest(unittest.TestCase):
                          "'Coding assistant' is not a Platform use case type", "Q2: tag", "Q16: missing answer"):
             self.assertIn(expected, message)
 
+    def test_rejects_non_text_registration_values_cleanly(self):
+        data = json.loads(json.dumps(self.data))
+        data["triage"] = []
+        data["registration"].update(title=123, platform_other=5)
+        with self.assertRaises(aiaf.WorkbookError) as caught:
+            self.sheet(data)
+        message = str(caught.exception)
+        for expected in ("'triage' must be an object", "registration.title must be text",
+                         "registration.platform_other must be text"):
+            self.assertIn(expected, message)
+
+    def test_keeps_table_cells_on_one_line(self):
+        data = json.loads(json.dumps(self.data))
+        data["registration"].update(team="Data | Analytics", title="Pull request\nreview")
+        out = self.sheet(data)
+        self.assertIn("| Team | Data \\| Analytics |", out)
+        self.assertIn("| Use case title | Pull request review |", out)
+
+    def test_refuses_an_unreadable_question_set(self):
+        path = os.path.join(self.dir.name, "questions.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("```text\nQ1 (E3): Phase?\n  phase:live: Live\n      technical: Running\n  continued text\n```\n")
+        with self.assertRaisesRegex(aiaf.WorkbookError, "unexpected line"):
+            aiaf.load_question_set(path)
+
     def test_does_not_need_the_xml_runtime(self):
         path = os.path.join(self.dir.name, "answers.json")
         with open(path, "w", encoding="utf-8") as f:

@@ -131,20 +131,17 @@ class XmlRuntimeTest(unittest.TestCase):
 
     def test_cli_refuses_old_runtime_before_io(self):
         commands = [
-            ["download", "--dir", "unused"],
             ["questions", "--workbook", "unused.xlsx"],
             ["fill", "--workbook", "unused.xlsx", "--answers", "unused.json", "--out", "out.xlsx"],
         ]
         for args in commands:
             with self.subTest(command=args[0]), \
                     patch.object(aiaf.expat, "version_info", (2, 7, 1)), \
-                    patch.object(aiaf, "download") as download, \
                     patch.object(aiaf, "Workbook") as workbook, \
                     patch.object(aiaf, "fill") as fill, \
                     redirect_stderr(io.StringIO()) as err:
                 self.assertEqual(aiaf.main(args), 1)
                 self.assertIn("Update your Python distribution", err.getvalue())
-                download.assert_not_called()
                 workbook.assert_not_called()
                 fill.assert_not_called()
 
@@ -162,14 +159,6 @@ class XmlRuntimeTest(unittest.TestCase):
             with self.assertRaisesRegex(aiaf.WorkbookError, "Expat 2.7.2 or later"):
                 aiaf.fill("unused.xlsx", "unused.json", "out.xlsx")
             open_file.assert_not_called()
-
-        with patch.object(aiaf.expat, "version_info", (2, 7, 1)), \
-                patch.object(aiaf, "fetch") as fetch, \
-                patch.object(aiaf.os, "makedirs") as makedirs:
-            with self.assertRaisesRegex(aiaf.WorkbookError, "Expat 2.7.2 or later"):
-                aiaf.download("unused")
-            fetch.assert_not_called()
-            makedirs.assert_not_called()
 
 
 class AiafTest(unittest.TestCase):
@@ -473,186 +462,94 @@ class AiafTest(unittest.TestCase):
         self.assertEqual(aiaf.col_letters(aiaf.col_number("AB")), "AB")
 
 
-class DownloadTest(unittest.TestCase):
-    """download() with the network replaced by fixed responses."""
-
+class PlatformSheetTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
-        self.workbook = os.path.join(self.dir.name, "fixture.xlsx")
-        build_workbook(self.workbook)
-        with open(self.workbook, "rb") as f:
-            self.body = f.read()
-        self.page = b'<a href="/sites/default/files/aiaf-tool.xlsx">Excel</a>'
-        self.real_fetch = aiaf.fetch
-        self.limits = []
-
-        def fake_fetch(url, timeout, limit):
-            self.limits.append(limit)
-            return self.page if url == aiaf.PAGE_URL else self.body
-        aiaf.fetch = fake_fetch
-        self.out = os.path.join(self.dir.name, "out")
+        self.questions = aiaf.load_question_set()
+        self.data = {
+            "triage": {"approved_tool": "Not sure", "purpose": "Pilot or official agency use", "higher_impact": "Yes"},
+            "registration": {"title": "AI-assisted pull request code review", "team": "Design System",
+                             "platform": "Other", "platform_other": "GitHub Copilot",
+                             "use_case_type": "Quality defect detection",
+                             "description": "Reviews pull requests and suggests changes a developer approves."},
+            "answers": {q["id"]: q["options"][0]["tag"] for q in self.questions},
+        }
 
     def tearDown(self):
-        aiaf.fetch = self.real_fetch
         self.dir.cleanup()
 
-    def test_downloads_validates_and_refreshes(self):
-        path, url, unchanged = aiaf.download(self.out)
-        self.assertEqual((os.path.basename(path), unchanged), ("aiaf-tool.xlsx", False))
-        self.assertEqual(url, "https://www.digital.nsw.gov.au/sites/default/files/aiaf-tool.xlsx")
-        self.assertEqual(aiaf.download(self.out)[2], True, "a second download reports the file unchanged")
-        with open(path, "wb") as f:
-            f.write(b"corrupt")
-        aiaf.download(self.out)
-        with open(path, "rb") as f:
-            self.assertEqual(f.read(), self.body, "a corrupt or stale copy is replaced")
-        self.assertEqual(sorted(os.listdir(self.out)), ["aiaf-tool.xlsx"], "no temporary files are left behind")
-        self.assertEqual(set(self.limits), {aiaf.MAX_PAGE_BYTES, aiaf.MAX_DOWNLOAD_BYTES}, "every fetch is size-limited")
+    def sheet(self, data):
+        path = os.path.join(self.dir.name, "answers.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        return aiaf.platform_sheet(path)
 
-    def test_rejects_an_invalid_download_and_keeps_nothing(self):
-        self.body = b"not a workbook"
-        with self.assertRaises(aiaf.WorkbookError):
-            aiaf.download(self.out)
-        self.assertEqual(os.listdir(self.out), [])
+    def test_loads_the_bundled_question_set(self):
+        self.assertEqual([q["id"] for q in self.questions], [f"Q{n}" for n in range(1, 17)])
+        self.assertTrue(all(o["technical"] and o["ethical"] for q in self.questions for o in q["options"]))
+        section_ids = [qid for _, ids in aiaf.PLATFORM_SECTIONS for qid in ids]
+        self.assertEqual(sorted(section_ids), sorted(q["id"] for q in self.questions))
 
-    def test_does_not_write_through_links(self):
-        os.makedirs(self.out)
-        target = os.path.join(self.dir.name, "elsewhere.txt")
-        with open(target, "w") as f:
-            f.write("keep")
-        os.symlink(target, os.path.join(self.out, "aiaf-tool.xlsx"))
-        with self.assertRaisesRegex(aiaf.WorkbookError, "not a regular file"):
-            aiaf.download(self.out)
-        os.symlink(target, os.path.join(self.out, "aiaf-tool.xlsx.part"))
-        os.remove(os.path.join(self.out, "aiaf-tool.xlsx"))
-        aiaf.download(self.out)
-        with open(target) as f:
-            self.assertEqual(f.read(), "keep", "a planted .part link is never written through")
+    def test_lists_questions_in_platform_section_order_with_exact_option_text(self):
+        out = self.sheet(self.data)
+        order = re.findall(r"^- \*\*(Q\d+)\.\*\*", out, re.M)
+        self.assertEqual(order, [qid for _, ids in aiaf.PLATFORM_SECTIONS for qid in ids])
+        q1 = self.questions[0]
+        self.assertIn(" ".join(q1["options"][0]["option_text"].split()), out)
+        self.assertIn("| Platform | Other (specify: GitHub Copilot) |", out)
+        self.assertIn("**Not sure**", out)
 
-    def test_requires_https_on_a_nsw_gov_au_site(self):
-        for href, message in [(b"http://www.digital.nsw.gov.au/a.xlsx", "insecure"),
-                              (b"https://example.org/aiaf.xlsx", "not a nsw.gov.au site")]:
-            self.page = b'<a href="' + href + b'">x</a>'
-            with self.assertRaisesRegex(aiaf.WorkbookError, message):
-                aiaf.download(self.out)
-        for newurl, message in [("http://www.digital.nsw.gov.au/a.xlsx", "insecure"),
-                                ("https://example.org/a.xlsx", "not a nsw.gov.au site"),
-                                ("https://nsw.gov.au.example.org/a.xlsx", "not a nsw.gov.au site")]:
-            with self.assertRaisesRegex(aiaf.WorkbookError, message):
-                aiaf.TrustedRedirects().redirect_request(None, None, 302, "Found", {}, newurl)
+    def test_platform_titles_match_the_reference(self):
+        with open(QUESTIONS_MD, encoding="utf-8") as f:
+            rows = dict(re.findall(r"^\| (Q\d+) \| (.+) \|$", f.read(), re.M))
+        self.assertEqual(rows, aiaf.PLATFORM_TITLES)
+        self.assertIn(aiaf.PLATFORM_TITLES["Q9"], self.sheet(self.data))
 
+    def test_reports_every_problem_at_once(self):
+        data = json.loads(json.dumps(self.data))
+        data["triage"]["purpose"] = "Something else"
+        data["registration"].update(title="x" * 65, platform_other="", description="word " * 151,
+                                    use_case_type="Coding assistant")
+        data["answers"]["Q2"] = data["answers"]["Q1"]
+        del data["answers"]["Q16"]
+        with self.assertRaises(aiaf.WorkbookError) as caught:
+            self.sheet(data)
+        message = str(caught.exception)
+        for expected in ("triage.purpose", "65 characters", "platform_other", "151 words",
+                         "'Coding assistant' is not a Platform use case type", "Q2: tag", "Q16: missing answer"):
+            self.assertIn(expected, message)
 
-class FakeProcess:
-    def __init__(self, stdout, returncode=0, stderr=b""):
-        self.stdout, self.stderr = io.BytesIO(stdout), io.BytesIO(stderr)
-        self.returncode, self.killed = returncode, False
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def kill(self):
-        self.killed = True
-
-    def wait(self):
-        return self.returncode
+    def test_does_not_need_the_xml_runtime(self):
+        path = os.path.join(self.dir.name, "answers.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.data, f)
+        with patch.object(aiaf.expat, "version_info", (2, 7, 1)), redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(aiaf.main(["platform", "--answers", path]), 0)
+        self.assertIn("# AIAF Platform entry sheet", out.getvalue())
 
 
-class CurlFallbackTest(unittest.TestCase):
-    """The curl fallback follows redirects one at a time, checking each address first."""
-
-    TRUSTED = "https://www.digital.nsw.gov.au/a.xlsx"
-
-    def setUp(self):
-        self.real_popen, self.real_which = aiaf.subprocess.Popen, aiaf.shutil.which
-        aiaf.shutil.which = lambda name: "/usr/bin/curl"
-        self.requests = []
-
-    def tearDown(self):
-        aiaf.subprocess.Popen, aiaf.shutil.which = self.real_popen, self.real_which
-
-    def respond(self, *responses):
-        processes = [FakeProcess(*r) if isinstance(r, tuple) else FakeProcess(r) for r in responses]
-        self.processes = list(processes)
-
-        def popen(args, **kwargs):
-            self.requests.append(args)
-            return processes.pop(0)
-        aiaf.subprocess.Popen = popen
-
-    def test_returns_the_body_of_a_direct_response(self):
-        self.respond(b"line one\nline two\n\n200 ")
-        self.assertEqual(aiaf.curl_fetch(self.TRUSTED, 5, "test", 1000), b"line one\nline two\n")
-        self.assertIn("--max-filesize", self.requests[0])
-        self.assertNotIn("--location", self.requests[0], "curl must not follow redirects itself")
-
-    def test_follows_a_trusted_redirect(self):
-        self.respond(b"\n301 https://www.digital.nsw.gov.au/b.xlsx", b"workbook\n200 ")
-        self.assertEqual(aiaf.curl_fetch(self.TRUSTED, 5, "test", 1000), b"workbook")
-        self.assertEqual(self.requests[1][-1], "https://www.digital.nsw.gov.au/b.xlsx")
-
-    def test_never_requests_an_untrusted_hop(self):
-        for location in (b"https://attacker.example.org/x.xlsx", b"http://www.digital.nsw.gov.au/x.xlsx"):
-            self.requests.clear()
-            self.respond(b"\n302 " + location, b"workbook\n200 ")
-            with self.assertRaisesRegex(aiaf.WorkbookError, "not a nsw.gov.au site|insecure"):
-                aiaf.curl_fetch(self.TRUSTED, 5, "test", 1000)
-            self.assertEqual(len(self.requests), 1, "the untrusted address is refused before it is requested")
-
-    def test_limits_redirects(self):
-        self.respond(*[b"\n302 " + self.TRUSTED.encode()] * (aiaf.MAX_REDIRECTS + 1))
-        with self.assertRaisesRegex(aiaf.WorkbookError, "more than 5 redirects"):
-            aiaf.curl_fetch(self.TRUSTED, 5, "test", 1000)
-
-    def test_stops_reading_an_oversized_response(self):
-        self.respond(b"x" * 20000 + b"\n200 ")
-        with self.assertRaisesRegex(aiaf.WorkbookError, "larger than 100 bytes"):
-            aiaf.curl_fetch(self.TRUSTED, 5, "test", 100)
-        self.assertTrue(self.processes[0].killed)
-        self.respond(b"x" * 150 + b"\n200 ")
-        with self.assertRaisesRegex(aiaf.WorkbookError, "larger than 100 bytes"):
-            aiaf.curl_fetch(self.TRUSTED, 5, "test", 100)
-
-    def test_reports_curl_failures(self):
-        self.respond((b"", 63, b"curl: (63) Maximum file size exceeded"))
-        with self.assertRaisesRegex(aiaf.WorkbookError, "Maximum file size exceeded"):
-            aiaf.curl_fetch(self.TRUSTED, 5, "test", 100)
-        self.respond(b"no status line")
-        with self.assertRaisesRegex(aiaf.WorkbookError, "could not read the response status"):
-            aiaf.curl_fetch(self.TRUSTED, 5, "test", 100)
+QUESTIONS_MD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "references", "questions.md")
 
 
-class FetchErrorTest(unittest.TestCase):
-    def test_wraps_http_protocol_errors(self):
-        class Response:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def geturl(self):
-                return aiaf.PAGE_URL
-
-            def read(self, size=-1):
-                raise aiaf.http.client.IncompleteRead(b"partial", 100)
-
-        real = aiaf.urllib.request.build_opener
-        aiaf.urllib.request.build_opener = lambda *handlers: types.SimpleNamespace(open=lambda request, timeout: Response())
-        try:
-            with self.assertRaisesRegex(aiaf.WorkbookError, "could not download .*IncompleteRead"):
-                aiaf.fetch(aiaf.PAGE_URL, 5, 1000)
-        finally:
-            aiaf.urllib.request.build_opener = real
+def bundled_question_set():
+    """The `questions` output embedded in references/questions.md."""
+    with open(QUESTIONS_MD, encoding="utf-8") as f:
+        text = f.read()
+    match = re.search(r"^```text\n(.*?)^```$", text, re.S | re.M)
+    if not match:
+        raise AssertionError("references/questions.md has no ```text block")
+    return match.group(1)
 
 
-class ReadLimitedTest(unittest.TestCase):
-    def test_reads_up_to_the_limit_only(self):
-        self.assertEqual(aiaf.read_limited(io.BytesIO(b"x" * 100), 100, "u"), b"x" * 100)
-        with self.assertRaisesRegex(aiaf.WorkbookError, "u is larger than 99 bytes"):
-            aiaf.read_limited(io.BytesIO(b"x" * 100), 99, "u")
+class BundledQuestionSetTest(unittest.TestCase):
+    def test_has_sixteen_questions_each_with_tagged_options(self):
+        block = bundled_question_set()
+        ids = re.findall(r"^(Q\d+) \(E\d+\): ", block, re.M)
+        self.assertEqual(ids, [f"Q{n}" for n in range(1, 17)])
+        for chunk in re.split(r"^Q\d+ \(E\d+\): ", block, flags=re.M)[1:]:
+            tags = re.findall(r"^  ([a-z_]+:[a-z0-9_]+): ", chunk, re.M)
+            self.assertGreaterEqual(len(tags), 2, chunk.splitlines()[0])
+            self.assertEqual(len({t.split(":")[0] for t in tags}), 1, "one tag prefix per question")
 
 
 @unittest.skipUnless(os.environ.get("AIAF_WORKBOOK"), "set AIAF_WORKBOOK to test the official workbook")
@@ -669,6 +566,14 @@ class OfficialWorkbookTest(unittest.TestCase):
         self.assertTrue(all(o["technical"] and o["ethical"] for q in questions for o in q["options"]))
         self.assertEqual(cells, {"project_title": "G5", "project_description": "G8", "over_5m_or_drf": "G14",
                                  "completed_by": "G16", "date_completed": "G19"})
+
+    def test_bundled_question_set_matches_the_workbook(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(aiaf.main(["questions", "--workbook", os.environ["AIAF_WORKBOOK"]]), 0)
+        # The first line names the workbook file, which differs between copies.
+        printed = out.getvalue().split("\n", 1)[1]
+        self.assertEqual(bundled_question_set().split("\n", 1)[1], printed)
 
 
 if __name__ == "__main__":

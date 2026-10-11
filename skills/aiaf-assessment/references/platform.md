@@ -18,7 +18,7 @@ The Platform records each step against the signed-in user in the AIAF audit trai
 
 Triage decides the pathway: the full AIAF, another assurance process, or no further action. Whatever the result, the Platform asks for the use case to be registered so it is part of the audit trail.
 
-A gateway step comes first. The AIAF assesses how AI will be used, not the AI product or platform on its own. If the user is assessing a product, platform or tool itself (for example, deciding whether to buy or approve it), the AIAF is the wrong process; they use their agency's procurement, cyber security, privacy or technical assurance process instead.
+A gateway step comes first. The AIAF assesses how AI will be used, not the AI product or platform on its own. If the user is assessing a product, platform or tool itself (for example, deciding whether to buy or approve it), the AIAF is the wrong process; they use their agency's procurement, cyber security, privacy or technical assurance process instead. `scripts/aiaf.py platform` refuses a triage purpose of "Assessing the product or platform itself" for this reason.
 
 Then three mandatory questions. Where more than one option applies, choose the one with the greatest potential impact.
 
@@ -41,8 +41,12 @@ A result of "Full AIAF" leads to registration and then the 16 core questions.
 | Use case title | Plain English, in the form [Domain] + [Use case]. No vendor names or jargon. At most 64 characters. |
 | Team | Free text. |
 | Platform | Azure OpenAI, Custom model service, Microsoft 365 Copilot, Salesforce Einstein, or Other. Other asks the user to name the platform. |
-| Use case type | One of the Platform's fixed list (`USE_CASE_TYPES` in `scripts/aiaf.py`). There is no coding option; pick the closest type or Other. |
+| Use case type | One of the Platform's list (below). There is no coding option; pick the closest type or Other. |
 | Description | At most 150 words, plain English, written for a reader who is not a data science team. Describe what the system does, who uses it, and what outcomes it achieves, in that order. |
+
+Use case types: Agent orchestration; Anomaly detection; Case intake triage; Compliance monitoring; Content ideation; Conversational assistant; Data exploration assistant; Data to narrative; Document drafting; Document editing and rewriting; Document summarisation; Document understanding; Duplicate detection; Email triage; Entity extraction; Experimental / research use; FAQ self-service; Field extraction (forms); Fraud detection; Identity access anomaly detection; Insight generation; Intelligent routing; Knowledge base question answering; Metadata tagging; Model monitoring; Personal productivity assistant; Propensity scoring; Quality defect detection; RAG knowledge assistant; Recommendation engine; Redaction / de-identification; Report generation; Research assistant; Resource allocation optimisation; Risk scoring; Root cause analysis support; RPA augmentation; Safety quality monitoring; Scenario analysis; Scheduling optimisation; Security threat detection; Semantic search assistant; Sensitive information detection; Slide deck generation; Summarisation; Template population; Text drafting; Text rewriting / editing; Time series forecasting; Topic modelling; Transcription; Translation; Trend detection; Visual content generation; Workflow automation; Other.
+
+The platform and use case type lists were read from the Platform and can change. `scripts/aiaf.py platform` warns, rather than fails, on a value outside them, so the user checks it when registering.
 
 Registration opens the assessment straight away. Registered use cases appear in the Platform's use case directory, which every signed-in user can browse, with the business owner's name and email.
 

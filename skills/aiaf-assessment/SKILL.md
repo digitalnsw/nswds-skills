@@ -28,7 +28,7 @@ Check the circular and the AIAF page for changes before relying on these points,
 `scripts/aiaf.py` (standard library only) does the file work. Run it from this skill's directory or by full path:
 
 ```bash
-python3 scripts/aiaf.py platform --answers answers.json                # Platform entry sheet
+python3 scripts/aiaf.py platform --answers answers.json --out "<sheet>.md"   # Platform entry sheet
 python3 scripts/aiaf.py questions --workbook <workbook.xlsx>           # offline workbook: every question, option and tag
 python3 scripts/aiaf.py fill --workbook <workbook.xlsx> --answers answers.json --out "<completed>.xlsx"
 ```
@@ -59,7 +59,7 @@ Ask follow-up questions only where the answer would change a high-impact choice 
 
 ## 2. Choose an answer for every core question
 
-Read the options from the source for the route: [questions.md](references/questions.md) for the Platform, or `questions` on the user's workbook for the offline route (the workbook is the source of truth for that route, in case its version differs). Choose the one option per question whose full text and technical and ethical descriptions best match the system, and record its tag, for example `phase:deployment`.
+Read the options from the source for the route: [questions.md](references/questions.md) for the Platform, or `questions` on the user's workbook for the offline route (the workbook is the source of truth for that route, in case its version differs). Choose the one option per question whose full text and technical and ethical descriptions best match the system, and record its tag, for example `phase:deployment`. For the Platform route, answer the question as the Platform words it: questions.md lists the titles that differ, and Q12 on the Platform covers errors acted on as well as outages.
 
 - Choose what is true, not the lowest-risk option. The assessment is a risk instrument, and understating risk defeats it.
 - Answer for the current lifecycle phase, not a planned one.
@@ -71,7 +71,7 @@ Read the options from the source for the route: [questions.md](references/questi
 
 Read [platform.md](references/platform.md). Draft the triage and registration as well as the core answers:
 
-- **Triage:** answer the three questions from the facts. For "agency-approved", use what the user knows about their agency's approved technology; the Platform has no list to check, and "Not sure" is the honest answer when they cannot confirm. If the user is assessing a product or platform itself rather than a use of it, stop: the AIAF is the wrong process (see platform.md).
+- **Triage:** answer the three questions from the facts. For "agency-approved", use what the user knows about their agency's approved technology; the Platform has no list to check, and "Not sure" is the honest answer when they cannot confirm. If the user is assessing a product or platform itself rather than a use of it, stop: the AIAF is the wrong process (see platform.md), and `platform` refuses that triage answer.
 - **Registration:** a plain-English title in the form [Domain] + [Use case] with no vendor names (at most 64 characters); the team; the platform (Other plus a name when it is not listed); the closest use case type from the Platform's list; and a description of at most 150 words saying what the system does, who uses it and what outcomes it achieves.
 
 Write `answers.json`:
@@ -98,7 +98,7 @@ Write `answers.json`:
 }
 ```
 
-Include all 16 answers. Run `platform`. It checks everything at once (unknown triage options, title length, description length, use case types, missing or misplaced tags) and prints the entry sheet. Fix `answers.json` until it runs cleanly, then save the sheet as a Markdown file in the user's folder, for example `AIAF Platform entry - <title>.md`.
+Include all 16 answers. Run `platform` with `--out` pointing at a Markdown file in the user's folder, for example `AIAF Platform entry - <title>.md`. It lists every problem at once (unknown triage options, a product assessment, title and description length, missing fields, missing or misplaced tags) and writes the file only when there are none. Fix `answers.json` until it runs cleanly. It warns, and notes on the sheet, when a platform or use case type is not on the list it knows, when Team is blank, or when `platform_other` is set without Other: pass these on to the user. The sheet names the question set it was built from; tell the user to follow the Platform if its questions or options differ.
 
 Look for answer combinations the Platform is likely to flag (platform.md gives an example) and draft a short, factual explanation for any that are correct, so the user has it ready.
 

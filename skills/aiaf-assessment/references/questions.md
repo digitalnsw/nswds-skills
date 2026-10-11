@@ -27,7 +27,9 @@ Options are worded the same in both, apart from punctuation (the Platform's Q4 "
 | Q10 | What level of human oversight or governance is applied to system's decisions and behaviour? |
 | Q12 | What is the potential impact of a failure or error by the AI system? |
 
-The entry sheet from `scripts/aiaf.py platform` uses these titles.
+For the Platform route, answer the Platform's title, not the workbook's. Q12 differs in meaning as well as wording: the workbook asks about the operational impact if the system fails, while the Platform asks about the impact of a failure **or error**, which includes wrong outputs that are acted on. Q9 asks the same thing in fewer words. The entry sheet from `scripts/aiaf.py platform` uses these titles.
+
+When the Platform's questions or options differ from this question set, the Platform is right: tell the user, and update this file from a current workbook (`python3 scripts/aiaf.py questions --workbook <file>`, pasted over the block below; its first line can stay as printed).
 
 ## Questions and options
 

@@ -20,7 +20,7 @@ Audit Record from the answers.
 
     python3 aiaf.py questions --workbook FILE [--json]
     python3 aiaf.py fill --workbook FILE --answers answers.json --out FILE
-    python3 aiaf.py platform --answers answers.json
+    python3 aiaf.py platform --answers answers.json [--out FILE]
 
 Standard library only. `questions` and `fill` need Python 3.11 or later with Expat
 2.7.2 or later; `platform` reads no workbook XML and has no such requirement.
@@ -115,6 +115,7 @@ USE_CASE_TYPES = [
 REGISTRATION_FIELDS = ["title", "team", "platform", "platform_other", "use_case_type", "description"]
 MAX_TITLE_CHARS = 64
 MAX_DESCRIPTION_WORDS = 150
+PRODUCT_ASSESSMENT = "Assessing the product or platform itself"
 
 
 class WorkbookError(Exception):
@@ -431,7 +432,7 @@ def meta_cells(workbook):
     return cells
 
 
-def validate(data, questions):
+def validate(data, questions, source="workbook"):
     errors = []
     if not isinstance(data, dict):
         return {}, {}, ["answers file must be a JSON object with 'meta' and 'answers'"]
@@ -447,7 +448,7 @@ def validate(data, questions):
         meta = {}
     ids = [q["id"] for q in questions]
     for key in sorted(set(answers) - set(ids)):
-        errors.append(f"{key}: not a question in this workbook")
+        errors.append(f"{key}: not a question in this {source}")
     resolved = {}
     for q in questions:
         tag = str(answers.get(q["id"]) or "").strip()
@@ -565,18 +566,27 @@ def fill(template, answers_path, out_path):
         book.close()
 
 
+def one_line(value):
+    """Text collapsed to one line, as the Platform and the entry sheet show it."""
+    return " ".join(str(value or "").split())
+
+
 def load_question_set(path=QUESTION_SET):
     """The core questions from the bundled question set (the `questions` output kept in
-    references/questions.md), in the same shape load_questions returns."""
+    references/questions.md), in the same shape load_questions returns, plus the
+    question set version named on the block's first line."""
     with open(path, encoding="utf-8") as f:
         text = f.read()
     match = re.search(r"^```text\n(.*?)^```$", text, re.S | re.M)
     if not match:
         raise WorkbookError(f"{path} has no question set block")
+    header, _, body = match.group(1).partition("\n")
+    version = re.search(r"\(question set ([^)]+)\)", header)
     questions, option = [], None
-    for line in match.group(1).splitlines():
+    for line in body.splitlines():
         if m := re.fullmatch(r"(Q\d+) \((E\d+)\): (.+)", line):
             questions.append({"id": m[1], "assessment_cell": m[2], "question": m[3], "options": []})
+            option = None
         elif m := re.fullmatch(r"      (technical|ethical): (.*)", line):
             if option is None:
                 raise WorkbookError(f"{path}: description before any option: {line!r}")
@@ -586,16 +596,17 @@ def load_question_set(path=QUESTION_SET):
                 raise WorkbookError(f"{path}: option before any question: {line!r}")
             option = {"tag": m[1], "option_text": m[2], "technical": "", "ethical": ""}
             questions[-1]["options"].append(option)
-        elif line.strip() and not line.startswith("AIAF workbook"):
+        elif line.strip():
             raise WorkbookError(f"{path}: unexpected line in the question set: {line!r}")
     if not questions:
         raise WorkbookError(f"{path} lists no questions")
-    return questions
+    return questions, version[1] if version else ""
 
 
 def check_platform_fields(data):
-    """Problems with the triage and registration parts of a Platform answers file."""
-    errors = []
+    """Problems (which stop the entry sheet) and warnings (which are shown on it) for
+    the triage and registration parts of a Platform answers file."""
+    errors, warnings = [], []
     triage = data.get("triage", {})
     if not isinstance(triage, dict):
         errors.append("'triage' must be an object")
@@ -608,34 +619,49 @@ def check_platform_fields(data):
             errors.append(f"triage.{key}: missing answer")
         elif value not in options:
             errors.append(f"triage.{key} must be one of: {'; '.join(options)} (got {value!r})")
+    if triage.get("purpose") == PRODUCT_ASSESSMENT:
+        errors.append("triage.purpose is \"Assessing the product or platform itself\": the AIAF assesses a use "
+                      "of AI, not a product or platform on its own. Use the agency's procurement, cyber security, "
+                      "privacy or technical assurance process instead, or describe the use case and triage that")
     reg = data.get("registration", {})
     if not isinstance(reg, dict):
-        return errors + ["'registration' must be an object"]
+        errors.append("'registration' must be an object")
+        reg = {}
     for key in sorted(set(reg) - set(REGISTRATION_FIELDS)):
         errors.append(f"registration.{key}: unknown field")
+    text = {}
     for key in REGISTRATION_FIELDS:
-        if reg.get(key) is not None and not isinstance(reg[key], str):
+        value = reg.get(key)
+        if value is not None and not isinstance(value, str):
             errors.append(f"registration.{key} must be text")
-    if errors and any(e.endswith("must be text") for e in errors):
-        return errors
-    title = " ".join(str(reg.get("title") or "").split())
-    if not title:
+        text[key] = one_line(value) if isinstance(value, str) else ""
+    if not text["title"]:
         errors.append("registration.title: missing")
-    elif len(title) > MAX_TITLE_CHARS:
-        errors.append(f"registration.title is {len(title)} characters; the Platform allows {MAX_TITLE_CHARS}")
-    platform = reg.get("platform")
-    if platform not in PLATFORMS:
-        errors.append(f"registration.platform must be one of: {'; '.join(PLATFORMS)} (got {platform!r})")
-    elif platform == "Other" and not str(reg.get("platform_other") or "").strip():
+    elif len(text["title"]) > MAX_TITLE_CHARS:
+        errors.append(f"registration.title is {len(text['title'])} characters; the Platform allows {MAX_TITLE_CHARS}")
+    if not text["team"]:
+        warnings.append("Team is blank; fill it in on the Platform")
+    platform = text["platform"]
+    if not platform:
+        errors.append("registration.platform: missing")
+    elif platform not in PLATFORMS:
+        warnings.append(f"Platform \"{platform}\" was not in the Platform's list ({'; '.join(PLATFORMS)}); "
+                        "check the list when registering")
+    if platform == "Other" and not text["platform_other"]:
         errors.append("registration.platform_other: name the platform when platform is Other")
-    if reg.get("use_case_type") not in USE_CASE_TYPES:
-        errors.append(f"registration.use_case_type: {reg.get('use_case_type')!r} is not a Platform use case type")
-    words = len(str(reg.get("description") or "").split())
+    elif platform != "Other" and text["platform_other"]:
+        warnings.append(f"platform_other \"{text['platform_other']}\" is only asked for when Platform is Other")
+    if not text["use_case_type"]:
+        errors.append("registration.use_case_type: missing")
+    elif text["use_case_type"] not in USE_CASE_TYPES:
+        warnings.append(f"Use case type \"{text['use_case_type']}\" was not in the Platform's list; "
+                        "check the list when registering")
+    words = len(text["description"].split())
     if not words:
         errors.append("registration.description: missing")
     elif words > MAX_DESCRIPTION_WORDS:
         errors.append(f"registration.description is {words} words; the Platform allows {MAX_DESCRIPTION_WORDS}")
-    return errors
+    return errors, warnings, text
 
 
 def platform_sheet(answers_path, question_set=QUESTION_SET):
@@ -645,22 +671,28 @@ def platform_sheet(answers_path, question_set=QUESTION_SET):
         data = json.load(f)
     if not isinstance(data, dict):
         raise WorkbookError("answers file must be a JSON object with 'triage', 'registration' and 'answers'")
-    questions = load_question_set(question_set)
+    questions, version = load_question_set(question_set)
     extra = set(data) - {"triage", "registration", "answers"}
     errors = [f"unknown top-level keys: {', '.join(sorted(extra))}"] if extra else []
-    errors += check_platform_fields(data)
-    resolved, _, answer_errors = validate({"answers": data.get("answers", {})}, questions)
+    field_errors, warnings, reg = check_platform_fields(data)
+    errors += field_errors
+    resolved, _, answer_errors = validate({"answers": data.get("answers", {})}, questions, source="core question set")
     errors += answer_errors
     if errors:
         raise WorkbookError("could not build the Platform entry sheet:\n  - " + "\n  - ".join(errors))
     by_id = {q["id"]: q for q in questions}
-    reg = data["registration"]
 
     def cell(value):
-        # One line, and a literal | cannot end the Markdown table cell.
-        return " ".join(str(value or "").split()).replace("|", "\\|")
+        # A literal | would end the Markdown table cell.
+        return one_line(value).replace("|", "\\|")
 
-    lines = ["# AIAF Platform entry sheet", "", "## 1. Triage", ""]
+    lines = ["# AIAF Platform entry sheet", ""]
+    if version:
+        lines += [f"Core questions: question set {version}. If the Platform's questions or options differ, "
+                  "follow the Platform.", ""]
+    if warnings:
+        lines += ["Check before entering:", ""] + [f"- {w}" for w in warnings] + [""]
+    lines += ["## 1. Triage", ""]
     for n, (key, (question, _)) in enumerate(TRIAGE.items(), 1):
         lines.append(f"{n}. {question}  \n   **{data['triage'][key]}**")
     platform = reg["platform"] + (f" (specify: {cell(reg['platform_other'])})" if reg["platform"] == "Other" else "")
@@ -668,7 +700,7 @@ def platform_sheet(answers_path, question_set=QUESTION_SET):
               "Agency, business owner and owner email are filled in from your sign-in.", "",
               "| Field | Enter |", "| --- | --- |",
               f"| Use case title | {cell(reg['title'])} |",
-              f"| Team | {cell(reg.get('team'))} |",
+              f"| Team | {cell(reg['team'])} |",
               f"| Platform | {platform} |",
               f"| Use case type | {cell(reg['use_case_type'])} |",
               f"| Description | {cell(reg['description'])} |",
@@ -678,8 +710,23 @@ def platform_sheet(answers_path, question_set=QUESTION_SET):
         for qid in ids:
             q = by_id[qid]
             title = PLATFORM_TITLES.get(qid, q["question"])
-            lines.append(f"- **{qid}.** {title}  \n  {' '.join(resolved[q['assessment_cell']].split())}")
-    return "\n".join(lines) + "\n"
+            lines.append(f"- **{qid}.** {title}  \n  {one_line(resolved[q['assessment_cell']])}")
+    return "\n".join(lines) + "\n", warnings
+
+
+def write_text(path, text):
+    """Write text to path only once it is complete, so a failed run leaves nothing behind."""
+    path = os.path.abspath(path)
+    fd, tmp = tempfile.mkstemp(suffix=".part", dir=os.path.dirname(path) or ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+    return path
 
 
 def main(argv=None):
@@ -692,8 +739,9 @@ def main(argv=None):
     f.add_argument("--workbook", required=True, help="the official workbook to fill (not modified)")
     f.add_argument("--answers", required=True, help="answers.json")
     f.add_argument("--out", required=True, help="the completed workbook to write")
-    p = sub.add_parser("platform", help="print an AIAF Platform entry sheet from answers.json")
+    p = sub.add_parser("platform", help="write an AIAF Platform entry sheet from answers.json")
     p.add_argument("--answers", required=True, help="answers.json with triage, registration and answers")
+    p.add_argument("--out", help="the Markdown file to write (default: print it)")
     args = parser.parse_args(argv)
     try:
         # Refuse an unsupported runtime before reading or creating any files. The
@@ -715,14 +763,20 @@ def main(argv=None):
                 for q in questions:
                     print(f"{q['id']} ({q['assessment_cell']}): {q['question']}")
                     for o in q["options"]:
-                        print(f"  {o['tag']}: {' '.join(o['option_text'].split())}")
+                        print(f"  {o['tag']}: {one_line(o['option_text'])}")
                         if o["technical"]:
                             print(f"      technical: {o['technical']}")
                         if o["ethical"]:
                             print(f"      ethical: {o['ethical']}")
                     print()
         elif args.command == "platform":
-            print(platform_sheet(args.answers), end="")
+            sheet, warnings = platform_sheet(args.answers)
+            for w in warnings:
+                print(f"warning: {w}", file=sys.stderr)
+            if args.out:
+                print(f"Wrote {write_text(args.out, sheet)}")
+            else:
+                print(sheet, end="")
         else:
             path, filled, total, meta = fill(args.workbook, args.answers, args.out)
             print(f"Wrote {path}\n  {filled}/{total} answers filled; use-case fields: {', '.join(meta) or 'none'}")

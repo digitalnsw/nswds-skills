@@ -465,7 +465,7 @@ class AiafTest(unittest.TestCase):
 class PlatformSheetTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
-        self.questions = aiaf.load_question_set()
+        self.questions, self.version = aiaf.load_question_set()
         self.data = {
             "triage": {"approved_tool": "Not sure", "purpose": "Pilot or official agency use", "higher_impact": "Yes"},
             "registration": {"title": "AI-assisted pull request code review", "team": "Design System",
@@ -478,82 +478,136 @@ class PlatformSheetTest(unittest.TestCase):
     def tearDown(self):
         self.dir.cleanup()
 
-    def sheet(self, data):
+    def write_answers(self, data):
         path = os.path.join(self.dir.name, "answers.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f)
-        return aiaf.platform_sheet(path)
+        return path
+
+    def sheet(self, data):
+        return aiaf.platform_sheet(self.write_answers(data))
+
+    def problems(self, data):
+        with self.assertRaises(aiaf.WorkbookError) as caught:
+            self.sheet(data)
+        return str(caught.exception)
+
+    def changed(self, **registration):
+        data = json.loads(json.dumps(self.data))
+        data["registration"].update(registration)
+        return data
 
     def test_loads_the_bundled_question_set(self):
         self.assertEqual([q["id"] for q in self.questions], [f"Q{n}" for n in range(1, 17)])
+        self.assertEqual(self.version, "PROD-01")
         self.assertTrue(all(o["technical"] and o["ethical"] for q in self.questions for o in q["options"]))
         section_ids = [qid for _, ids in aiaf.PLATFORM_SECTIONS for qid in ids]
         self.assertEqual(sorted(section_ids), sorted(q["id"] for q in self.questions))
 
     def test_lists_questions_in_platform_section_order_with_exact_option_text(self):
-        out = self.sheet(self.data)
+        out, warnings = self.sheet(self.data)
+        self.assertEqual(warnings, [])
         order = re.findall(r"^- \*\*(Q\d+)\.\*\*", out, re.M)
         self.assertEqual(order, [qid for _, ids in aiaf.PLATFORM_SECTIONS for qid in ids])
-        q1 = self.questions[0]
-        self.assertIn(" ".join(q1["options"][0]["option_text"].split()), out)
+        self.assertIn(aiaf.one_line(self.questions[0]["options"][0]["option_text"]), out)
         self.assertIn("| Platform | Other (specify: GitHub Copilot) |", out)
         self.assertIn("**Not sure**", out)
+        self.assertIn("question set PROD-01", out)
 
     def test_platform_titles_match_the_reference(self):
         with open(QUESTIONS_MD, encoding="utf-8") as f:
             rows = dict(re.findall(r"^\| (Q\d+) \| (.+) \|$", f.read(), re.M))
         self.assertEqual(rows, aiaf.PLATFORM_TITLES)
-        self.assertIn(aiaf.PLATFORM_TITLES["Q9"], self.sheet(self.data))
+        self.assertIn(aiaf.PLATFORM_TITLES["Q12"], self.sheet(self.data)[0])
+
+    def test_platform_reference_matches_the_script(self):
+        with open(PLATFORM_MD, encoding="utf-8") as f:
+            text = f.read()
+        triage = {}
+        for question, options in re.findall(r"^\| (.+\?) \| (.+) \|$", text, re.M):
+            triage[question] = [re.sub(r" \(.*\)$", "", o.strip()) for o in options.split(" · ")]
+        self.assertEqual(triage, {q: opts for q, opts in aiaf.TRIAGE.values()})
+        platforms = re.search(r"^\| Platform \| (.+?), or Other\.", text, re.M)[1]
+        self.assertEqual(platforms.split(", ") + ["Other"], aiaf.PLATFORMS)
+        self.assertIn(f"At most {aiaf.MAX_TITLE_CHARS} characters", text)
+        self.assertIn(f"At most {aiaf.MAX_DESCRIPTION_WORDS} words", text)
+        types = re.search(r"^Use case types: (.+)\.$", text, re.M)[1]
+        self.assertEqual(types.split("; "), aiaf.USE_CASE_TYPES)
 
     def test_reports_every_problem_at_once(self):
-        data = json.loads(json.dumps(self.data))
+        data = self.changed(title="x" * 65, platform_other="", description="word " * 151, use_case_type=7)
         data["triage"]["purpose"] = "Something else"
-        data["registration"].update(title="x" * 65, platform_other="", description="word " * 151,
-                                    use_case_type="Coding assistant")
         data["answers"]["Q2"] = data["answers"]["Q1"]
+        data["answers"]["Q17"] = "phase:live"
         del data["answers"]["Q16"]
-        with self.assertRaises(aiaf.WorkbookError) as caught:
-            self.sheet(data)
-        message = str(caught.exception)
+        message = self.problems(data)
         for expected in ("triage.purpose", "65 characters", "platform_other", "151 words",
-                         "'Coding assistant' is not a Platform use case type", "Q2: tag", "Q16: missing answer"):
+                         "use_case_type must be text", "Q2: tag", "Q16: missing answer",
+                         "Q17: not a question in this core question set"):
             self.assertIn(expected, message)
 
-    def test_rejects_non_text_registration_values_cleanly(self):
-        data = json.loads(json.dumps(self.data))
+    def test_reports_non_text_values_alongside_other_problems(self):
+        data = self.changed(title=123, platform_other=5, description="word " * 151)
         data["triage"] = []
-        data["registration"].update(title=123, platform_other=5)
-        with self.assertRaises(aiaf.WorkbookError) as caught:
-            self.sheet(data)
-        message = str(caught.exception)
+        message = self.problems(data)
         for expected in ("'triage' must be an object", "registration.title must be text",
-                         "registration.platform_other must be text"):
+                         "registration.platform_other must be text", "151 words"):
             self.assertIn(expected, message)
+
+    def test_stops_when_the_product_itself_is_being_assessed(self):
+        data = json.loads(json.dumps(self.data))
+        data["triage"]["purpose"] = aiaf.PRODUCT_ASSESSMENT
+        self.assertIn("procurement, cyber security, privacy or technical assurance", self.problems(data))
+
+    def test_warns_instead_of_failing_on_values_the_platform_may_have_added(self):
+        out, warnings = self.sheet(self.changed(platform="New Platform AI", platform_other="Unused",
+                                                use_case_type="Coding assistant", team=""))
+        self.assertEqual(len(warnings), 4)
+        for w in warnings:
+            self.assertIn(f"- {w}", out)
+        self.assertIn("| Platform | New Platform AI |", out)
 
     def test_keeps_table_cells_on_one_line(self):
-        data = json.loads(json.dumps(self.data))
-        data["registration"].update(team="Data | Analytics", title="Pull request\nreview")
-        out = self.sheet(data)
+        out, _ = self.sheet(self.changed(team="Data | Analytics", title="Pull request\nreview"))
         self.assertIn("| Team | Data \\| Analytics |", out)
         self.assertIn("| Use case title | Pull request review |", out)
+
+    def test_reads_a_regenerated_block_whatever_its_first_line(self):
+        path = os.path.join(self.dir.name, "questions.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("```text\nmy copy.xlsx (question set PROD-02): 1 questions. Choose one tag per question.\n\n"
+                    "Q1 (E3): Phase?\n  phase:live: Live\n      technical: Running\n      ethical: Watch\n\n```\n")
+        questions, version = aiaf.load_question_set(path)
+        self.assertEqual((len(questions), version), (1, "PROD-02"))
 
     def test_refuses_an_unreadable_question_set(self):
         path = os.path.join(self.dir.name, "questions.md")
         with open(path, "w", encoding="utf-8") as f:
-            f.write("```text\nQ1 (E3): Phase?\n  phase:live: Live\n      technical: Running\n  continued text\n```\n")
+            f.write("```text\nheader\nQ1 (E3): Phase?\n  phase:live: Live\n      technical: Running\n"
+                    "  continued text\n```\n")
         with self.assertRaisesRegex(aiaf.WorkbookError, "unexpected line"):
             aiaf.load_question_set(path)
 
+    def test_writes_the_sheet_only_when_it_succeeds(self):
+        out = os.path.join(self.dir.name, "sheet.md")
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(aiaf.main(["platform", "--answers", self.write_answers(self.data), "--out", out]), 0)
+        with open(out, encoding="utf-8") as f:
+            self.assertTrue(f.read().startswith("# AIAF Platform entry sheet"))
+        bad = os.path.join(self.dir.name, "bad.md")
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(aiaf.main(["platform", "--answers", self.write_answers({"answers": {}}), "--out", bad]), 1)
+        self.assertFalse(os.path.exists(bad))
+        self.assertEqual([n for n in os.listdir(self.dir.name) if n.endswith(".part")], [])
+
     def test_does_not_need_the_xml_runtime(self):
-        path = os.path.join(self.dir.name, "answers.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(self.data, f)
         with patch.object(aiaf.expat, "version_info", (2, 7, 1)), redirect_stdout(io.StringIO()) as out:
-            self.assertEqual(aiaf.main(["platform", "--answers", path]), 0)
+            self.assertEqual(aiaf.main(["platform", "--answers", self.write_answers(self.data)]), 0)
         self.assertIn("# AIAF Platform entry sheet", out.getvalue())
 
 
 QUESTIONS_MD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "references", "questions.md")
+PLATFORM_MD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "references", "platform.md")
 
 
 def bundled_question_set():

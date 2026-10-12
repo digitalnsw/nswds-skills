@@ -684,8 +684,9 @@ def platform_sheet(answers_path, question_set=QUESTION_SET):
     by_id = {q["id"]: q for q in questions}
 
     def cell(value):
-        # A literal | would end the Markdown table cell.
-        return one_line(value).replace("|", "\\|")
+        # A literal | would end the Markdown table cell. Escape backslashes first, so a
+        # backslash the user typed before a pipe is kept rather than read as the escape.
+        return one_line(value).replace("\\", "\\\\").replace("|", "\\|")
 
     lines = ["# AIAF Platform entry sheet", ""]
     if version:

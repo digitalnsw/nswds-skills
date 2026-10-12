@@ -569,9 +569,11 @@ class PlatformSheetTest(unittest.TestCase):
 
     def test_keeps_table_cells_on_one_line(self):
         out, _ = self.sheet(self.changed(team="Data | Analytics", title="Pull request\nreview",
-                                         platform="Vendor | Model", platform_other=""))
+                                         platform="Vendor | Model", platform_other="",
+                                         description="Reads a\\|b and C:\\data"))
         self.assertIn("| Team | Data \\| Analytics |", out)
         self.assertIn("| Platform | Vendor \\| Model |", out)
+        self.assertIn("| Description | Reads a\\\\\\|b and C:\\\\data |", out)
         self.assertIn("| Use case title | Pull request review |", out)
 
     def test_reads_a_regenerated_block_whatever_its_first_line(self):

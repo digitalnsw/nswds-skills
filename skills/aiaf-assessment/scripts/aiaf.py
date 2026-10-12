@@ -78,7 +78,8 @@ PLATFORM_SECTIONS = [
     ("Risk & impact", ["Q7", "Q8", "Q9", "Q11", "Q12"]),
     ("Governance & oversight", ["Q10", "Q13", "Q14", "Q15"]),
 ]
-# Question titles the Platform words differently from the workbook (options are identical).
+# Question titles the Platform words differently from the workbook. Options match the workbook text,
+# apart from one punctuation difference recorded in references/questions.md.
 PLATFORM_TITLES = {
     "Q2": "What type of AI System are you assessing?",
     "Q4": "Which of the following best describes the data your system primarily uses? (If multiple apply, "

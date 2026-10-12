@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""Download, read and fill the NSW AI Assessment Framework (AIAF) Excel workbook.
+"""Prepare an NSW AI Assessment Framework (AIAF) assessment for the AIAF Platform, or
+read and fill the offline AIAF Excel workbook.
 
-The official workbook published by Digital NSW is the single source of truth:
+`platform` turns answers.json into an entry sheet for the AIAF Platform, using the
+core question set bundled in references/questions.md and the Platform's triage and
+registration lists below.
+
+For the offline workbook (requested from Digital NSW), the workbook is the single
+source of truth:
 questions, answer options, their technical and ethical descriptions, tags and the
 position of every input cell are read from the workbook itself, so a new release of
 the workbook is picked up without changing this script.
@@ -12,34 +18,26 @@ formatting and every other sheet stay byte-for-byte the same, and Excel is told 
 recalculate on open so it computes the risk scores, DeepDive, Risk Register and
 Audit Record from the answers.
 
-    python3 aiaf.py download [--dir DIR]
     python3 aiaf.py questions --workbook FILE [--json]
     python3 aiaf.py fill --workbook FILE --answers answers.json --out FILE
+    python3 aiaf.py platform --answers answers.json [--out FILE]
 
-Standard library only; Python 3.11 or later with Expat 2.7.2 or later.
+Standard library only. `questions` and `fill` need Python 3.11 or later with Expat
+2.7.2 or later; `platform` reads no workbook XML and has no such requirement.
 """
 import argparse
 import datetime
-import http.client
 import json
 import os
 import re
-import shutil
-import ssl
-import subprocess
 import sys
 import tempfile
-import urllib.error
-import urllib.parse
-import urllib.request
 import zipfile
 import zlib
 from xml.etree import ElementTree
 from xml.parsers import expat
 from xml.sax.saxutils import escape
 
-PAGE_URL = ("https://www.digital.nsw.gov.au/policy/artificial-intelligence/"
-            "ai-governance-assurance-and-frameworks/nsw-ai-assessment-framework")
 MAIN = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 PKG_REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
@@ -60,7 +58,6 @@ QUESTION_HEADERS = {
 }
 INVALID_XML = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
 DATE = re.compile(r"\d{2}/\d{2}/\d{4}")
-WORKBOOK_HOST = re.compile(r"(^|\.)nsw\.gov\.au$")
 # The official workbook has about 70 parts and 8 MB unpacked; these limits sit far above
 # that and stop a crafted file from exhausting memory.
 MAX_PARTS = 2000
@@ -70,10 +67,56 @@ MAX_RATIO = 200
 # zipfile reads the whole central directory when a file is opened, one record of at least
 # 46 bytes per part, so its size is checked first. The official workbook's is under 10 KB.
 MAX_CENTRAL_DIRECTORY = 1024 * 1024
-# Downloads are read in chunks and refused past these sizes (the workbook is about 2.4 MB).
-MAX_PAGE_BYTES = 5 * 1024 * 1024
-MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
-MAX_REDIRECTS = 5
+
+# AIAF Platform (https://aiaf.dac.nsw.gov.au): the core questions come from the
+# bundled question set; the triage questions and registration lists below are the
+# Platform's own and have no workbook equivalent.
+QUESTION_SET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "references", "questions.md")
+PLATFORM_SECTIONS = [
+    ("System context", ["Q1", "Q2", "Q3", "Q16"]),
+    ("Data & deployment", ["Q4", "Q5", "Q6"]),
+    ("Risk & impact", ["Q7", "Q8", "Q9", "Q11", "Q12"]),
+    ("Governance & oversight", ["Q10", "Q13", "Q14", "Q15"]),
+]
+# Question titles the Platform words differently from the workbook. Options match the workbook text,
+# apart from one punctuation difference recorded in references/questions.md.
+PLATFORM_TITLES = {
+    "Q2": "What type of AI System are you assessing?",
+    "Q4": "Which of the following best describes the data your system primarily uses? (If multiple apply, "
+          "select the category with the highest sensitivity or risk)",
+    "Q9": "What level of autonomy does the system operate at?",
+    "Q10": "What level of human oversight or governance is applied to system's decisions and behaviour?",
+    "Q12": "What is the potential impact of a failure or error by the AI system?",
+}
+TRIAGE = {
+    "approved_tool": ("Will this use case use an agency-approved AI platform, product or tool?",
+                      ["Yes", "No", "Not sure"]),
+    "purpose": ("What are you using AI for?",
+                ["Personal, non-agency use", "Individual work productivity", "Controlled experiment or prototype",
+                 "Pilot or official agency use", "Assessing the product or platform itself", "Not sure"]),
+    "higher_impact": ("Does this use involve higher-impact activity or information?", ["Yes", "No", "Not sure"]),
+}
+PLATFORMS = ["Azure OpenAI", "Custom model service", "Microsoft 365 Copilot", "Salesforce Einstein", "Other"]
+USE_CASE_TYPES = [
+    "Agent orchestration", "Anomaly detection", "Case intake triage", "Compliance monitoring", "Content ideation",
+    "Conversational assistant", "Data exploration assistant", "Data to narrative", "Document drafting",
+    "Document editing and rewriting", "Document summarisation", "Document understanding", "Duplicate detection",
+    "Email triage", "Entity extraction", "Experimental / research use", "FAQ self-service",
+    "Field extraction (forms)", "Fraud detection", "Identity access anomaly detection", "Insight generation",
+    "Intelligent routing", "Knowledge base question answering", "Metadata tagging", "Model monitoring",
+    "Personal productivity assistant", "Propensity scoring", "Quality defect detection", "RAG knowledge assistant",
+    "Recommendation engine", "Redaction / de-identification", "Report generation", "Research assistant",
+    "Resource allocation optimisation", "Risk scoring", "Root cause analysis support", "RPA augmentation",
+    "Safety quality monitoring", "Scenario analysis", "Scheduling optimisation", "Security threat detection",
+    "Semantic search assistant", "Sensitive information detection", "Slide deck generation", "Summarisation",
+    "Template population", "Text drafting", "Text rewriting / editing", "Time series forecasting",
+    "Topic modelling", "Transcription", "Translation", "Trend detection", "Visual content generation",
+    "Workflow automation", "Other",
+]
+REGISTRATION_FIELDS = ["title", "team", "platform", "platform_other", "use_case_type", "description"]
+MAX_TITLE_CHARS = 64
+MAX_DESCRIPTION_WORDS = 150
+PRODUCT_ASSESSMENT = "Assessing the product or platform itself"
 
 
 class WorkbookError(Exception):
@@ -390,7 +433,7 @@ def meta_cells(workbook):
     return cells
 
 
-def validate(data, questions):
+def validate(data, questions, source="workbook"):
     errors = []
     if not isinstance(data, dict):
         return {}, {}, ["answers file must be a JSON object with 'meta' and 'answers'"]
@@ -406,7 +449,7 @@ def validate(data, questions):
         meta = {}
     ids = [q["id"] for q in questions]
     for key in sorted(set(answers) - set(ids)):
-        errors.append(f"{key}: not a question in this workbook")
+        errors.append(f"{key}: not a question in this {source}")
     resolved = {}
     for q in questions:
         tag = str(answers.get(q["id"]) or "").strip()
@@ -524,141 +567,173 @@ def fill(template, answers_path, out_path):
         book.close()
 
 
-def require_trusted(url):
-    """Only HTTPS URLs on a nsw.gov.au host are fetched, including every redirect."""
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https":
-        raise WorkbookError(f"refusing to download over an insecure connection: {url}")
-    if not WORKBOOK_HOST.search(parsed.hostname or ""):
-        raise WorkbookError(f"refusing to download from a host that is not a nsw.gov.au site: {url}")
+def one_line(value):
+    """Text collapsed to one line, as the Platform and the entry sheet show it."""
+    return " ".join(str(value or "").split())
 
 
-class TrustedRedirects(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        require_trusted(newurl)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+def load_question_set(path=QUESTION_SET):
+    """The core questions from the bundled question set (the `questions` output kept in
+    references/questions.md), in the same shape load_questions returns, plus the
+    question set version named on the block's first line."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    match = re.search(r"^```text\n(.*?)^```$", text, re.S | re.M)
+    if not match:
+        raise WorkbookError(f"{path} has no question set block")
+    header, _, body = match.group(1).partition("\n")
+    version = re.search(r"\(question set ([^)]+)\)", header)
+    questions, option = [], None
+    for line in body.splitlines():
+        if m := re.fullmatch(r"(Q\d+) \((E\d+)\): (.+)", line):
+            questions.append({"id": m[1], "assessment_cell": m[2], "question": m[3], "options": []})
+            option = None
+        elif m := re.fullmatch(r"      (technical|ethical): (.*)", line):
+            if option is None:
+                raise WorkbookError(f"{path}: description before any option: {line!r}")
+            option[m[1]] = m[2]
+        elif m := re.fullmatch(r"  ([a-z_]+:[a-z0-9_]+): (.+)", line):
+            if not questions:
+                raise WorkbookError(f"{path}: option before any question: {line!r}")
+            option = {"tag": m[1], "option_text": m[2], "technical": "", "ethical": ""}
+            questions[-1]["options"].append(option)
+        elif line.strip():
+            raise WorkbookError(f"{path}: unexpected line in the question set: {line!r}")
+    if not questions:
+        raise WorkbookError(f"{path} lists no questions")
+    return questions, version[1] if version else ""
 
 
-def read_limited(stream, limit, url):
-    chunks, size = [], 0
-    while True:
-        chunk = stream.read(64 * 1024)
-        if not chunk:
-            return b"".join(chunks)
-        size += len(chunk)
-        if size > limit:
-            raise WorkbookError(f"{url} is larger than {limit} bytes; refusing it")
-        chunks.append(chunk)
+def check_platform_fields(data):
+    """Problems (which stop the entry sheet) and warnings (which are shown on it) for
+    the triage and registration parts of a Platform answers file."""
+    errors, warnings = [], []
+    triage = data.get("triage", {})
+    if not isinstance(triage, dict):
+        errors.append("'triage' must be an object")
+        triage = {}
+    for key in sorted(set(triage) - set(TRIAGE)):
+        errors.append(f"triage.{key}: unknown field")
+    for key, (_, options) in TRIAGE.items():
+        value = triage.get(key)
+        if value is None:
+            errors.append(f"triage.{key}: missing answer")
+        elif value not in options:
+            errors.append(f"triage.{key} must be one of: {'; '.join(options)} (got {value!r})")
+    if triage.get("purpose") == PRODUCT_ASSESSMENT:
+        errors.append("triage.purpose is \"Assessing the product or platform itself\": the AIAF assesses a use "
+                      "of AI, not a product or platform on its own. Use the agency's procurement, cyber security, "
+                      "privacy or technical assurance process instead, or describe the use case and triage that")
+    reg = data.get("registration", {})
+    if not isinstance(reg, dict):
+        errors.append("'registration' must be an object")
+        reg = {}
+    for key in sorted(set(reg) - set(REGISTRATION_FIELDS)):
+        errors.append(f"registration.{key}: unknown field")
+    text = {}
+    for key in REGISTRATION_FIELDS:
+        value = reg.get(key)
+        if value is not None and not isinstance(value, str):
+            errors.append(f"registration.{key} must be text")
+        text[key] = one_line(value) if isinstance(value, str) else ""
+    if not text["title"]:
+        errors.append("registration.title: missing")
+    elif len(text["title"]) > MAX_TITLE_CHARS:
+        errors.append(f"registration.title is {len(text['title'])} characters; the Platform allows {MAX_TITLE_CHARS}")
+    if not text["team"]:
+        warnings.append("Team is blank; fill it in on the Platform")
+    platform = text["platform"]
+    if not platform:
+        errors.append("registration.platform: missing")
+    elif platform not in PLATFORMS:
+        warnings.append(f"Platform \"{platform}\" was not in the Platform's list ({'; '.join(PLATFORMS)}); "
+                        "check the list when registering")
+    if platform == "Other" and not text["platform_other"]:
+        errors.append("registration.platform_other: name the platform when platform is Other")
+    elif platform != "Other" and text["platform_other"]:
+        warnings.append(f"platform_other \"{text['platform_other']}\" is only asked for when Platform is Other")
+    if not text["use_case_type"]:
+        errors.append("registration.use_case_type: missing")
+    elif text["use_case_type"] not in USE_CASE_TYPES:
+        warnings.append(f"Use case type \"{text['use_case_type']}\" was not in the Platform's list; "
+                        "check the list when registering")
+    words = len(text["description"].split())
+    if not words:
+        errors.append("registration.description: missing")
+    elif words > MAX_DESCRIPTION_WORDS:
+        errors.append(f"registration.description is {words} words; the Platform allows {MAX_DESCRIPTION_WORDS}")
+    return errors, warnings, text
 
 
-def fetch(url, timeout, limit):
-    """GET a URL, reading at most limit bytes. Falls back to the system curl (which still
-    verifies certificates) when this Python has no CA bundle, as with a python.org install
-    on macOS."""
-    require_trusted(url)
-    request = urllib.request.Request(url, headers={"User-Agent": "nswds-skills"})
+def platform_sheet(answers_path, question_set=QUESTION_SET):
+    """An entry sheet for the AIAF Platform: triage, registration and the exact option
+    text to choose for each core question, in the Platform's section order."""
+    with open(answers_path, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise WorkbookError("answers file must be a JSON object with 'triage', 'registration' and 'answers'")
+    questions, version = load_question_set(question_set)
+    extra = set(data) - {"triage", "registration", "answers"}
+    errors = [f"unknown top-level keys: {', '.join(sorted(extra))}"] if extra else []
+    field_errors, warnings, reg = check_platform_fields(data)
+    errors += field_errors
+    resolved, _, answer_errors = validate({"answers": data.get("answers", {})}, questions, source="core question set")
+    errors += answer_errors
+    if errors:
+        raise WorkbookError("could not build the Platform entry sheet:\n  - " + "\n  - ".join(errors))
+    by_id = {q["id"]: q for q in questions}
+
+    def cell(value):
+        # A literal | would end the Markdown table cell. Escape backslashes first, so a
+        # backslash the user typed before a pipe is kept rather than read as the escape.
+        return one_line(value).replace("\\", "\\\\").replace("|", "\\|")
+
+    lines = ["# AIAF Platform entry sheet", ""]
+    if version:
+        lines += [f"Core questions: question set {version}. If the Platform's questions or options differ, "
+                  "follow the Platform.", ""]
+    if warnings:
+        lines += ["Check before entering:", ""] + [f"- {w}" for w in warnings] + [""]
+    lines += ["## 1. Triage", ""]
+    for n, (key, (question, _)) in enumerate(TRIAGE.items(), 1):
+        lines.append(f"{n}. {question}  \n   **{data['triage'][key]}**")
+    platform = cell(reg["platform"]) + (f" (specify: {cell(reg['platform_other'])})" if reg["platform"] == "Other" else "")
+    lines += ["", "## 2. Register the use case", "",
+              "Agency, business owner and owner email are filled in from your sign-in.", "",
+              "| Field | Enter |", "| --- | --- |",
+              f"| Use case title | {cell(reg['title'])} |",
+              f"| Team | {cell(reg['team'])} |",
+              f"| Platform | {platform} |",
+              f"| Use case type | {cell(reg['use_case_type'])} |",
+              f"| Description | {cell(reg['description'])} |",
+              "", "## 3. Assessment"]
+    for section, ids in PLATFORM_SECTIONS:
+        lines += ["", f"### {section}", ""]
+        for qid in ids:
+            q = by_id[qid]
+            title = PLATFORM_TITLES.get(qid, q["question"])
+            lines.append(f"- **{qid}.** {title}  \n  {one_line(resolved[q['assessment_cell']])}")
+    return "\n".join(lines) + "\n", warnings
+
+
+def write_text(path, text):
+    """Write text to path only once it is complete, so a failed run leaves nothing behind."""
+    path = os.path.abspath(path)
+    fd, tmp = tempfile.mkstemp(suffix=".part", dir=os.path.dirname(path) or ".")
     try:
-        with urllib.request.build_opener(TrustedRedirects).open(request, timeout=timeout) as response:
-            require_trusted(response.geturl())
-            return read_limited(response, limit, url)
-    except http.client.HTTPException as e:
-        raise WorkbookError(f"could not download {url}: {e!r}") from e
-    except urllib.error.URLError as e:
-        if not isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
-            raise
-        return curl_fetch(url, timeout, e.reason, limit)
-
-
-def curl_fetch(url, timeout, reason, limit):
-    curl = shutil.which("curl")
-    if not curl:
-        raise WorkbookError(f"Python cannot verify HTTPS certificates ({reason}). Install its certificates "
-                            f"or download the workbook yourself from {PAGE_URL}")
-    # Redirects are followed one at a time so every address is checked before it is
-    # requested, as the urllib path does.
-    for _ in range(MAX_REDIRECTS + 1):
-        require_trusted(url)
-        body, status, location = curl_once(curl, url, timeout, limit)
-        if not (300 <= status < 400):
-            return body
-        if not location:
-            raise WorkbookError(f"{url} redirected without a location")
-        url = urllib.parse.urljoin(url, location)
-    raise WorkbookError(f"more than {MAX_REDIRECTS} redirects fetching {url}")
-
-
-def curl_once(curl, url, timeout, limit):
-    """One request without following redirects. curl writes the status and any redirect
-    target after the body."""
-    command = [curl, "--fail", "--silent", "--show-error", "--proto", "=https", "--max-time", str(timeout),
-               "--max-filesize", str(limit), "--user-agent", "nswds-skills",
-               "--write-out", "\n%{http_code} %{redirect_url}", url]
-    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
-        try:
-            # The status line follows the body, so allow room for it here and check the
-            # body itself against the limit below.
-            output = read_limited(process.stdout, limit + 8 * 1024, url)
-        except WorkbookError:
-            process.kill()
-            raise WorkbookError(f"{url} is larger than {limit} bytes; refusing it") from None
-        errors = process.stderr.read()
-        if process.wait():
-            raise WorkbookError(f"could not download {url}: {errors.decode(errors='replace').strip()}")
-    body, _, trailer = output.rpartition(b"\n")
-    status, _, location = trailer.decode("utf-8", "replace").strip().partition(" ")
-    if not status.isdigit():
-        raise WorkbookError(f"could not read the response status for {url}")
-    if len(body) > limit:
-        raise WorkbookError(f"{url} is larger than {limit} bytes; refusing it")
-    return body, int(status), location.strip()
-
-
-def download(directory):
-    """Fetch the current workbook, check it, and save it under its published name.
-    Always downloads, so a workbook updated under the same name is picked up."""
-    require_xml_runtime()
-    page = fetch(PAGE_URL, 60, MAX_PAGE_BYTES).decode("utf-8", "replace")
-    links = re.findall(r'href="([^"]+\.xlsx)"', page, re.I)
-    links = [l for l in links if "aiaf" in l.lower()] or links
-    if not links:
-        raise WorkbookError(f"no .xlsx download found on {PAGE_URL}; the page has changed")
-    url = urllib.parse.urljoin(PAGE_URL, links[0])
-    parsed = urllib.parse.urlparse(url)
-    require_trusted(url)
-    name = os.path.basename(urllib.parse.unquote(parsed.path))
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._ -]*\.xlsx", name):
-        raise WorkbookError(f"unexpected download file name {name!r} on {PAGE_URL}")
-    os.makedirs(directory, exist_ok=True)
-    path = os.path.join(directory, name)
-    if os.path.islink(path) or (os.path.exists(path) and not os.path.isfile(path)):
-        raise WorkbookError(f"{path} exists and is not a regular file; refusing to replace it")
-    body = fetch(url, 120, MAX_DOWNLOAD_BYTES)
-    unchanged = False
-    if os.path.isfile(path):
-        with open(path, "rb") as f:
-            unchanged = f.read() == body
-    fd, tmp = tempfile.mkstemp(suffix=".part", dir=directory)
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(body)
-        book = Workbook(tmp)
-        try:
-            load_questions(book)
-        finally:
-            book.close()
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
         os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
             os.remove(tmp)
         raise
-    return path, url, unchanged
+    return path
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
-    d = sub.add_parser("download", help="download the current official workbook from Digital NSW")
-    d.add_argument("--dir", default=".", help="directory to save it in (default: current directory)")
     q = sub.add_parser("questions", help="print every question, option, tag and description in a workbook")
     q.add_argument("--workbook", required=True)
     q.add_argument("--json", action="store_true", help="print as JSON")
@@ -666,14 +741,16 @@ def main(argv=None):
     f.add_argument("--workbook", required=True, help="the official workbook to fill (not modified)")
     f.add_argument("--answers", required=True, help="answers.json")
     f.add_argument("--out", required=True, help="the completed workbook to write")
+    p = sub.add_parser("platform", help="write an AIAF Platform entry sheet from answers.json")
+    p.add_argument("--answers", required=True, help="answers.json with triage, registration and answers")
+    p.add_argument("--out", help="the Markdown file to write (default: print it)")
     args = parser.parse_args(argv)
     try:
-        # Refuse an unsupported runtime before downloading or creating any files.
-        require_xml_runtime()
-        if args.command == "download":
-            path, url, unchanged = download(args.dir)
-            print(f"Downloaded{' (unchanged since last download)' if unchanged else ''}: {path}\nSource: {url}")
-        elif args.command == "questions":
+        # Refuse an unsupported runtime before reading or creating any files. The
+        # Platform entry sheet reads no workbook XML, so it does not need the check.
+        if args.command != "platform":
+            require_xml_runtime()
+        if args.command == "questions":
             book = Workbook(args.workbook)
             try:
                 questions, version = load_questions(book)
@@ -688,12 +765,20 @@ def main(argv=None):
                 for q in questions:
                     print(f"{q['id']} ({q['assessment_cell']}): {q['question']}")
                     for o in q["options"]:
-                        print(f"  {o['tag']}: {' '.join(o['option_text'].split())}")
+                        print(f"  {o['tag']}: {one_line(o['option_text'])}")
                         if o["technical"]:
                             print(f"      technical: {o['technical']}")
                         if o["ethical"]:
                             print(f"      ethical: {o['ethical']}")
                     print()
+        elif args.command == "platform":
+            sheet, warnings = platform_sheet(args.answers)
+            for w in warnings:
+                print(f"warning: {w}", file=sys.stderr)
+            if args.out:
+                print(f"Wrote {write_text(args.out, sheet)}")
+            else:
+                print(sheet, end="")
         else:
             path, filled, total, meta = fill(args.workbook, args.answers, args.out)
             print(f"Wrote {path}\n  {filled}/{total} answers filled; use-case fields: {', '.join(meta) or 'none'}")

@@ -1,3 +1,9 @@
+## [2.2.0](https://github.com/digitalnsw/nswds-skills/compare/v2.1.1...v2.2.0) (2026-10-12)
+
+### Features
+
+* **aiaf-assessment:** prepare assessments for the AIAF Platform ([#31](https://github.com/digitalnsw/nswds-skills/issues/31)) ([a909f5f](https://github.com/digitalnsw/nswds-skills/commit/a909f5f2ec067f6f680298a8c4bf2dbe0fe09c81))
+
 ## [2.1.1](https://github.com/digitalnsw/nswds-skills/compare/v2.1.0...v2.1.1) (2026-09-29)
 
 ### Bug Fixes

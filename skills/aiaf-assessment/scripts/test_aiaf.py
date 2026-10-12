@@ -568,8 +568,10 @@ class PlatformSheetTest(unittest.TestCase):
         self.assertIn("| Platform | New Platform AI |", out)
 
     def test_keeps_table_cells_on_one_line(self):
-        out, _ = self.sheet(self.changed(team="Data | Analytics", title="Pull request\nreview"))
+        out, _ = self.sheet(self.changed(team="Data | Analytics", title="Pull request\nreview",
+                                         platform="Vendor | Model", platform_other=""))
         self.assertIn("| Team | Data \\| Analytics |", out)
+        self.assertIn("| Platform | Vendor \\| Model |", out)
         self.assertIn("| Use case title | Pull request review |", out)
 
     def test_reads_a_regenerated_block_whatever_its_first_line(self):

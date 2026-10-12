@@ -695,7 +695,7 @@ def platform_sheet(answers_path, question_set=QUESTION_SET):
     lines += ["## 1. Triage", ""]
     for n, (key, (question, _)) in enumerate(TRIAGE.items(), 1):
         lines.append(f"{n}. {question}  \n   **{data['triage'][key]}**")
-    platform = reg["platform"] + (f" (specify: {cell(reg['platform_other'])})" if reg["platform"] == "Other" else "")
+    platform = cell(reg["platform"]) + (f" (specify: {cell(reg['platform_other'])})" if reg["platform"] == "Other" else "")
     lines += ["", "## 2. Register the use case", "",
               "Agency, business owner and owner email are filled in from your sign-in.", "",
               "| Field | Enter |", "| --- | --- |",
